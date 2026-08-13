@@ -23,11 +23,10 @@ from humanoid.envs import *
 from humanoid.utils import get_args, export_policy_as_jit, task_registry, Logger
 from isaacgym.torch_utils import *
 
-# Fallback: download checkpoint from OSS if not found locally
-FALLBACK_CHECKPOINT_URL = "https://limx-gradmotion.oss-cn-beijing.aliyuncs.com/upload%2F2026%2F8%2F12%2Fmodel_3000_20260812102153A256.pt?OSSAccessKeyId=LTAI5tMec8RQN1nZuRkVMgxz&Expires=1787106360&Signature=BEzjt9gIKOaMC7byPZrilc10xZw%3D"
+# Fallback URL is supplied only by the GM playback task, never committed to Git.
 
 
-def find_checkpoint():
+def find_checkpoint(checkpoint_url=None):
     """Search broadly for model_*.pt checkpoint"""
     search_dirs = [
         "/personal",
@@ -65,12 +64,15 @@ def find_checkpoint():
             return models[-1]  # Return latest
     # Fallback: download from OSS if not found locally
     print("[play_gm] No local checkpoint found, downloading from OSS...")
+    if not checkpoint_url:
+        print("[play_gm] No temporary checkpoint URL was supplied")
+        return None
     download_dir = os.path.join(LEGGED_GYM_ROOT_DIR, "logs", "x1_dh_stand", "gm_play")
     os.makedirs(download_dir, exist_ok=True)
-    download_path = os.path.join(download_dir, "model_3000.pt")
+    download_path = os.path.join(download_dir, "model_5000.pt")
     try:
         result = subprocess.run(
-            ["curl", "-L", "-o", download_path, FALLBACK_CHECKPOINT_URL],
+            ["curl", "-L", "-o", download_path, checkpoint_url],
             capture_output=True, text=True, timeout=120
         )
         if result.returncode == 0 and os.path.exists(download_path):
@@ -194,7 +196,7 @@ def play(args):
     train_cfg.seed = 12345
 
     # Find and load checkpoint
-    checkpoint_path = find_checkpoint()
+    checkpoint_path = find_checkpoint(getattr(args, "checkpoint_url", None))
     if checkpoint_path is None:
         print("[play_gm] ERROR: No checkpoint found in /personal/ or logs/")
         sys.exit(1)

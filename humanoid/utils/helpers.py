@@ -229,6 +229,11 @@ def get_args():
             "type": int,
             "help": "Maximum number of training iterations. Overrides config file if provided.",
         },
+        {
+            "name": "--checkpoint_url",
+            "type": str,
+            "help": "Temporary OSS URL used by cloud playback to download a checkpoint.",
+        },
     ]
     # parse arguments
     args = gymutil.parse_arguments(
