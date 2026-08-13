@@ -60,7 +60,7 @@ class X1DHStandCfg(LeggedRobotCfg):
 
 
     class asset(LeggedRobotCfg.asset):
-        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/x1/urdf/x1.urdf'
+        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/x1/urdf/X1_12DOF.urdf'
         xml_file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/x1/mjcf/xyber_x1_flat.xml'
 
         name = "x1"
