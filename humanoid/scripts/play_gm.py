@@ -129,9 +129,38 @@ def save_diag_csv(diag_data, experiment_name="x1_dh_stand", num_actions=12, dt=0
 
     header = ["step", "time_s", "base_height", "base_vel_x", "base_vel_y", "base_vel_yaw",
               "command_x", "foot_z_l", "foot_z_r", "foot_force_l", "foot_force_r"]
+    header += ["pre_base_height", "pre_base_vel_x", "pre_base_vel_y", "pre_base_vel_yaw",
+               "pre_foot_z_l", "pre_foot_z_r", "pre_foot_force_l", "pre_foot_force_r"]
+    header += ["command_y", "command_yaw", "tensor_command_x", "tensor_command_y", "tensor_command_yaw",
+               "next_command_x", "next_command_y", "next_command_yaw"]
+    header += ["done", "time_out", "motion_stage_before", "motion_stage_after",
+               "motion_stage_step_before", "motion_stage_step_after",
+               "reference_frame_before", "reference_frame_after",
+               "episode_length_before", "episode_length_after"]
+    header += [f"policy_action_{i}" for i in range(num_actions)]
+    header += [f"action_{i}" for i in range(num_actions)]
     header += [f"dof_pos_{i}" for i in range(num_actions)]
     header += [f"dof_vel_{i}" for i in range(num_actions)]
     header += [f"dof_torque_{i}" for i in range(num_actions)]
+    header += [f"ref_dof_pos_{i}" for i in range(num_actions)]
+    header += [f"ref_dof_vel_{i}" for i in range(num_actions)]
+    header += [f"target_dof_pos_{i}" for i in range(num_actions)]
+    header += ["ref_root_pos_x", "ref_root_pos_y", "ref_root_pos_z",
+               "ref_root_quat_x", "ref_root_quat_y", "ref_root_quat_z", "ref_root_quat_w",
+               "ref_root_lin_vel_x", "ref_root_lin_vel_y", "ref_root_lin_vel_z",
+               "ref_root_ang_vel_x", "ref_root_ang_vel_y", "ref_root_ang_vel_z"]
+
+    def value(data, key, index, default=np.nan):
+        values = data.get(key)
+        if values is None:
+            return default
+        return values[index]
+
+    def row_values(data, key, index, width):
+        values = data.get(key)
+        if values is None:
+            return [np.nan] * width
+        return list(values[index])
 
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -142,9 +171,44 @@ def save_diag_csv(diag_data, experiment_name="x1_dh_stand", num_actions=12, dt=0
                    diag_data["base_vel_yaw"][i], diag_data["command_x"][i],
                    diag_data["foot_z_l"][i], diag_data["foot_z_r"][i],
                    diag_data["foot_force_l"][i], diag_data["foot_force_r"][i]]
+            row += [value(diag_data, "pre_base_height", i),
+                    value(diag_data, "pre_base_vel_x", i),
+                    value(diag_data, "pre_base_vel_y", i),
+                    value(diag_data, "pre_base_vel_yaw", i),
+                    value(diag_data, "pre_foot_z_l", i),
+                    value(diag_data, "pre_foot_z_r", i),
+                    value(diag_data, "pre_foot_force_l", i),
+                    value(diag_data, "pre_foot_force_r", i)]
+            row += [value(diag_data, "command_y", i),
+                    value(diag_data, "command_yaw", i),
+                    value(diag_data, "tensor_command_x", i),
+                    value(diag_data, "tensor_command_y", i),
+                    value(diag_data, "tensor_command_yaw", i),
+                    value(diag_data, "next_command_x", i),
+                    value(diag_data, "next_command_y", i),
+                    value(diag_data, "next_command_yaw", i)]
+            row += [value(diag_data, "done", i, False),
+                    value(diag_data, "time_out", i, False),
+                    value(diag_data, "motion_stage_before", i, -1),
+                    value(diag_data, "motion_stage_after", i, -1),
+                    value(diag_data, "motion_stage_step_before", i, -1),
+                    value(diag_data, "motion_stage_step_after", i, -1),
+                    value(diag_data, "reference_frame_before", i, -1),
+                    value(diag_data, "reference_frame_after", i, -1),
+                    value(diag_data, "episode_length_before", i, -1),
+                    value(diag_data, "episode_length_after", i, -1)]
+            row += row_values(diag_data, "policy_action", i, num_actions)
+            row += row_values(diag_data, "action", i, num_actions)
             row += diag_data["dof_pos"][i]
             row += diag_data["dof_vel"][i]
             row += diag_data["dof_torque"][i]
+            row += row_values(diag_data, "ref_dof_pos", i, num_actions)
+            row += row_values(diag_data, "ref_dof_vel", i, num_actions)
+            row += row_values(diag_data, "target_dof_pos", i, num_actions)
+            row += row_values(diag_data, "ref_root_pos", i, 3)
+            row += row_values(diag_data, "ref_root_quat", i, 4)
+            row += row_values(diag_data, "ref_root_lin_vel", i, 3)
+            row += row_values(diag_data, "ref_root_ang_vel", i, 3)
             writer.writerow(row)
 
     print(f"[play_gm] Saved diagnostic CSV -> {csv_path}")
@@ -195,34 +259,40 @@ def play(args):
 
     train_cfg.seed = 12345
 
-    # Find and load checkpoint
-    checkpoint_path = find_checkpoint(getattr(args, "checkpoint_url", None))
-    if checkpoint_path is None:
-        print("[play_gm] ERROR: No checkpoint found in /personal/ or logs/")
-        sys.exit(1)
+    zero_action = bool(getattr(args, "zero_action", False))
+    if not zero_action:
+        # Find and load checkpoint for normal policy playback.
+        checkpoint_path = find_checkpoint(getattr(args, "checkpoint_url", None))
+        if checkpoint_path is None:
+            print("[play_gm] ERROR: No checkpoint found in /personal/ or logs/")
+            sys.exit(1)
 
-    print(f"[play_gm] Found checkpoint: {checkpoint_path}")
-
-    # Copy checkpoint to expected logs directory
-    log_dir = copy_checkpoint_to_logs(checkpoint_path, train_cfg.runner.experiment_name)
-    model_name = os.path.basename(checkpoint_path)  # e.g. model_10000.pt
-    checkpoint_num = int(model_name.replace("model_", "").replace(".pt", ""))
-
-    # Configure runner to load from our copied checkpoint
-    train_cfg.runner.resume = True
-    train_cfg.runner.load_run = "gm_play"
-    train_cfg.runner.checkpoint = checkpoint_num
+        print(f"[play_gm] Found checkpoint: {checkpoint_path}")
+        copy_checkpoint_to_logs(checkpoint_path, train_cfg.runner.experiment_name)
+        model_name = os.path.basename(checkpoint_path)  # e.g. model_10000.pt
+        checkpoint_num = int(model_name.replace("model_", "").replace(".pt", ""))
+        train_cfg.runner.resume = True
+        train_cfg.runner.load_run = "gm_play"
+        train_cfg.runner.checkpoint = checkpoint_num
+    else:
+        print("[play_gm] Zero-action reference validation enabled; checkpoint loading is skipped")
 
     # Create environment (headless with rendering enabled)
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
     env.set_camera(env_cfg.viewer.pos, env_cfg.viewer.lookat)
 
-    # Create runner and load policy
-    ppo_runner, train_cfg, _ = task_registry.make_alg_runner(
-        env=env, name=args.task, args=args, train_cfg=train_cfg
-    )
-    policy = ppo_runner.get_inference_policy(device=env.device)
-    print("[play_gm] Policy loaded successfully!")
+    policy = None
+    if zero_action:
+        # Normally the runner performs the initial environment reset. The
+        # checkpoint-free path must do it explicitly before collecting data.
+        env.reset()
+    else:
+        # Create runner and load policy.
+        ppo_runner, train_cfg, _ = task_registry.make_alg_runner(
+            env=env, name=args.task, args=args, train_cfg=train_cfg
+        )
+        policy = ppo_runner.get_inference_policy(device=env.device)
+        print("[play_gm] Policy loaded successfully!")
 
     # Setup camera for video recording
     camera_properties = gymapi.CameraProperties()
@@ -264,26 +334,125 @@ def play(args):
         "base_vel_y": [],
         "base_vel_yaw": [],
         "command_x": [],
+        "command_y": [],
+        "command_yaw": [],
+        "tensor_command_x": [],
+        "tensor_command_y": [],
+        "tensor_command_yaw": [],
+        "next_command_x": [],
+        "next_command_y": [],
+        "next_command_yaw": [],
         "foot_z_l": [],
         "foot_z_r": [],
         "foot_force_l": [],
         "foot_force_r": [],
+        "pre_base_height": [],
+        "pre_base_vel_x": [],
+        "pre_base_vel_y": [],
+        "pre_base_vel_yaw": [],
+        "pre_foot_z_l": [],
+        "pre_foot_z_r": [],
+        "pre_foot_force_l": [],
+        "pre_foot_force_r": [],
+        "done": [],
+        "time_out": [],
+        "motion_stage_before": [],
+        "motion_stage_after": [],
+        "motion_stage_step_before": [],
+        "motion_stage_step_after": [],
+        "reference_frame_before": [],
+        "reference_frame_after": [],
+        "episode_length_before": [],
+        "episode_length_after": [],
+        "policy_action": [],
+        "action": [],
         "dof_pos": [],
         "dof_vel": [],
         "dof_torque": [],
+        "ref_dof_pos": [],
+        "ref_dof_vel": [],
+        "target_dof_pos": [],
+        "ref_root_pos": [],
+        "ref_root_quat": [],
+        "ref_root_lin_vel": [],
+        "ref_root_ang_vel": [],
     }
 
-    FIX_COMMAND = True
+    # The trajectory task derives commands from the current reference. Replacing
+    # them with a fixed scalar would make actor observations and rewards disagree.
+    FIX_COMMAND = args.task != "x1_trajectory"
     fix_vel = 0.5  # Forward walking speed
 
-    for i in range(total_steps):
-        actions = policy(obs.detach())
+    def tensor_row(name, width, default=np.nan):
+        """Return one environment's row for an optional diagnostic tensor."""
+        tensor = getattr(env, name, None)
+        if tensor is None:
+            return [default] * width
+        if not torch.is_tensor(tensor):
+            return [default] * width
+        row = tensor[0].detach().cpu().reshape(-1).tolist()
+        if len(row) != width:
+            return [default] * width
+        return row
 
+    def tensor_scalar(name, default=-1):
+        """Return one environment's scalar for an optional diagnostic tensor."""
+        tensor = getattr(env, name, None)
+        if tensor is None or not torch.is_tensor(tensor):
+            return default
+        return tensor[0].detach().cpu().item()
+
+    for i in range(total_steps):
+        # Capture the state and reference used for the action.  The environment
+        # resets terminated robots inside env.step(), so post-step-only logging
+        # loses the actual terminal state.
+        pre_base_height = env.root_states[0, 2].item()
+        pre_base_vel = env.base_lin_vel[0].detach().cpu().tolist()
+        pre_base_ang_vel = env.base_ang_vel[0].detach().cpu().tolist()
+        pre_foot_z_l = env.rigid_state[0, left_foot_idx, 2].item()
+        pre_foot_z_r = env.rigid_state[0, right_foot_idx, 2].item()
+        pre_foot_force_l = env.contact_forces[0, left_foot_idx, 2].item()
+        pre_foot_force_r = env.contact_forces[0, right_foot_idx, 2].item()
+        command_before = env.commands[0].detach().cpu().tolist()
+        stage_before = tensor_scalar("motion_stage")
+        stage_step_before = tensor_scalar("motion_stage_step")
+        reference_frame_before = tensor_scalar("reference_frame")
+        episode_length_before = tensor_scalar("episode_length_buf")
+        ref_dof_pos = tensor_row("ref_dof_pos", env_cfg.env.num_actions)
+        ref_dof_vel = tensor_row("ref_dof_vel", env_cfg.env.num_actions)
+        ref_root_pos = tensor_row("ref_root_pos_w", 3)
+        ref_root_quat = tensor_row("ref_root_quat", 4)
+        ref_root_lin_vel = tensor_row("ref_root_lin_vel", 3)
+        ref_root_ang_vel = tensor_row("ref_root_ang_vel", 3)
+
+        # Keep fixed-command playback only for command-driven baseline tasks.
         if FIX_COMMAND:
             env.commands[:, 0] = fix_vel
             env.commands[:, 1] = 0.0
             env.commands[:, 2] = 0.0
             env.commands[:, 3] = 0.0
+            command_before = env.commands[0].detach().cpu().tolist()
+
+        # command_x/y/yaw are the command values actually present in the
+        # latest actor observation.  The tensor_command_* fields retain the
+        # command tensor immediately before env.step(), while next_command_*
+        # records the value produced by the environment after the step.
+        single_obs = obs[0, -env_cfg.env.num_single_obs:]
+        observed_command = [
+            single_obs[2].item() / float(env.obs_scales.lin_vel),
+            single_obs[3].item() / float(env.obs_scales.lin_vel),
+            single_obs[4].item() / float(env.obs_scales.ang_vel),
+        ]
+
+        if zero_action:
+            actions = torch.zeros(
+                (env.num_envs, env_cfg.env.num_actions), dtype=torch.float, device=env.device
+            )
+        else:
+            actions = policy(obs.detach())
+        policy_action = actions[0].detach().cpu().tolist()
+        clip_actions = float(env_cfg.normalization.clip_actions)
+        applied_action = torch.clamp(actions, -clip_actions, clip_actions)[0].detach().cpu().tolist()
 
         obs, critic_obs, rews, dones, infos = env.step(actions.detach())
 
@@ -292,14 +461,49 @@ def play(args):
         diag["base_vel_x"].append(env.base_lin_vel[0, 0].item())
         diag["base_vel_y"].append(env.base_lin_vel[0, 1].item())
         diag["base_vel_yaw"].append(env.base_ang_vel[0, 2].item())
-        diag["command_x"].append(env.commands[0, 0].item())
+        diag["command_x"].append(observed_command[0])
+        diag["command_y"].append(observed_command[1])
+        diag["command_yaw"].append(observed_command[2])
+        diag["tensor_command_x"].append(command_before[0])
+        diag["tensor_command_y"].append(command_before[1])
+        diag["tensor_command_yaw"].append(command_before[2])
+        diag["next_command_x"].append(env.commands[0, 0].item())
+        diag["next_command_y"].append(env.commands[0, 1].item())
+        diag["next_command_yaw"].append(env.commands[0, 2].item())
         diag["foot_z_l"].append(env.rigid_state[0, left_foot_idx, 2].item())
         diag["foot_z_r"].append(env.rigid_state[0, right_foot_idx, 2].item())
         diag["foot_force_l"].append(env.contact_forces[0, left_foot_idx, 2].item())
         diag["foot_force_r"].append(env.contact_forces[0, right_foot_idx, 2].item())
+        diag["pre_base_height"].append(pre_base_height)
+        diag["pre_base_vel_x"].append(pre_base_vel[0])
+        diag["pre_base_vel_y"].append(pre_base_vel[1])
+        diag["pre_base_vel_yaw"].append(pre_base_ang_vel[2])
+        diag["pre_foot_z_l"].append(pre_foot_z_l)
+        diag["pre_foot_z_r"].append(pre_foot_z_r)
+        diag["pre_foot_force_l"].append(pre_foot_force_l)
+        diag["pre_foot_force_r"].append(pre_foot_force_r)
+        diag["done"].append(bool(dones[0].item()))
+        diag["time_out"].append(bool(env.time_out_buf[0].item()))
+        diag["motion_stage_before"].append(stage_before)
+        diag["motion_stage_after"].append(tensor_scalar("motion_stage"))
+        diag["motion_stage_step_before"].append(stage_step_before)
+        diag["motion_stage_step_after"].append(tensor_scalar("motion_stage_step"))
+        diag["reference_frame_before"].append(reference_frame_before)
+        diag["reference_frame_after"].append(tensor_scalar("reference_frame"))
+        diag["episode_length_before"].append(episode_length_before)
+        diag["episode_length_after"].append(tensor_scalar("episode_length_buf"))
+        diag["policy_action"].append(policy_action)
+        diag["action"].append(applied_action)
         diag["dof_pos"].append(env.dof_pos[0].cpu().numpy().tolist())
         diag["dof_vel"].append(env.dof_vel[0].cpu().numpy().tolist())
         diag["dof_torque"].append(env.torques[0].cpu().numpy().tolist())
+        diag["ref_dof_pos"].append(ref_dof_pos)
+        diag["ref_dof_vel"].append(ref_dof_vel)
+        diag["target_dof_pos"].append(tensor_row("pd_target_dof_pos", env_cfg.env.num_actions))
+        diag["ref_root_pos"].append(ref_root_pos)
+        diag["ref_root_quat"].append(ref_root_quat)
+        diag["ref_root_lin_vel"].append(ref_root_lin_vel)
+        diag["ref_root_ang_vel"].append(ref_root_ang_vel)
 
         # Render and record video frame
         frame_count += 1
@@ -336,7 +540,8 @@ def play(args):
     print(f"  Frames recorded: {frame_count}")
     avg_vel = np.mean(diag["base_vel_x"])
     avg_height = np.mean(diag["base_height"])
-    print(f"  Avg forward velocity: {avg_vel:.3f} m/s (target: {fix_vel})")
+    avg_command = np.mean(diag["command_x"])
+    print(f"  Avg forward velocity: {avg_vel:.3f} m/s (mean command: {avg_command:.3f} m/s)")
     print(f"  Avg base height: {avg_height:.3f} m")
     print(f"  Video: {video_path}")
     print(f"  Packaged for upload: logs/{train_cfg.runner.experiment_name}/model_isaac_video.pt")

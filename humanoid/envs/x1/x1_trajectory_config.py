@@ -9,7 +9,7 @@ class X1TrajectoryCfg(X1DHStandCfg):
 
     class env(X1DHStandCfg.env):
         # The complete sequence is stand -> start -> walk -> stop -> stand.
-        episode_length_s = 10.0
+        episode_length_s = 6.0
         use_ref_actions = False
         num_single_obs = 79
         num_observations = int(X1DHStandCfg.env.frame_stack * num_single_obs)
@@ -42,6 +42,17 @@ class X1TrajectoryCfg(X1DHStandCfg):
     class normalization(X1DHStandCfg.normalization):
         clip_actions = 1.0
 
+    class control(X1DHStandCfg.control):
+        # Extra ankle damping reduces the limit impacts observed in exp0.
+        damping = {
+            "hip_pitch_joint": 3.0,
+            "hip_roll_joint": 3.0,
+            "hip_yaw_joint": 4.0,
+            "knee_pitch_joint": 10.0,
+            "ankle_pitch_joint": 1.2,
+            "ankle_roll_joint": 1.2,
+        }
+
     class noise(X1DHStandCfg.noise):
         # Reference tracking starts from clean observations; noise is added later by curriculum.
         add_noise = False
@@ -52,12 +63,13 @@ class X1TrajectoryCfg(X1DHStandCfg):
             "motion_walk_0.6ms_v1_x1_12d_100hz.npz"
         )
         expected_rate_hz = 100.0
-        gait_period_s = 1.08
+        canonicalize_root = True
+        gait_period_s = 1.09
         # A near-periodic 1.09 s unit selected from the retargeted steady walk.
         # The state at frame 141 is matched to frame 32 before repeating.
         steady_cycle_start_frame = 32
         steady_cycle_frames = 109
-        steady_walk_cycles = 6
+        steady_walk_cycles = 3
         initial_stand_s = 0.40
         start_transition_s = 0.80
         stop_transition_s = 0.80
@@ -76,6 +88,21 @@ class X1TrajectoryCfg(X1DHStandCfg):
             "right_ankle_pitch_joint",
             "right_ankle_roll_joint",
         )
+        residual_action_scales = {
+            "left_hip_pitch_joint": 0.20,
+            "left_hip_roll_joint": 0.12,
+            "left_hip_yaw_joint": 0.12,
+            "left_knee_pitch_joint": 0.20,
+            "left_ankle_pitch_joint": 0.08,
+            "left_ankle_roll_joint": 0.08,
+            "right_hip_pitch_joint": 0.20,
+            "right_hip_roll_joint": 0.12,
+            "right_hip_yaw_joint": 0.12,
+            "right_knee_pitch_joint": 0.20,
+            "right_ankle_pitch_joint": 0.08,
+            "right_ankle_roll_joint": 0.08,
+        }
+        joint_limit_margin_rad = 0.025
 
     class rewards(X1DHStandCfg.rewards):
         class scales(X1DHStandCfg.rewards.scales):
@@ -100,12 +127,13 @@ class X1TrajectoryCfg(X1DHStandCfg):
             base_acc = 0.0
             stand_still = 0.0
 
-            trajectory_joint_pos = 3.0
-            trajectory_joint_vel = 0.5
-            trajectory_root_pos = 1.0
-            trajectory_root_ori = 1.0
-            trajectory_root_lin_vel = 0.5
-            trajectory_root_ang_vel = 0.25
+            trajectory_joint_pos = 4.0
+            trajectory_joint_vel = 1.0
+            trajectory_root_pos = 1.5
+            trajectory_root_ori = 1.5
+            trajectory_root_lin_vel = 1.5
+            trajectory_root_ang_vel = 0.5
+            termination = -200.0
 
             action_smoothness = -0.002
             torques = -8e-9
@@ -120,5 +148,12 @@ class X1TrajectoryCfg(X1DHStandCfg):
 class X1TrajectoryCfgPPO(X1DHStandCfgPPO):
     """PPO configuration kept separate from the baseline task."""
 
+    class algorithm(X1DHStandCfgPPO.algorithm):
+        learning_rate = 1e-5
+
     class runner(X1DHStandCfgPPO.runner):
         experiment_name = "x1_trajectory"
+        run_name = "exp0_1"
+        max_iterations = 3000
+        save_interval = 100
+        resume = False

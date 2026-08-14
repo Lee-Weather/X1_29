@@ -234,6 +234,12 @@ def get_args():
             "type": str,
             "help": "Temporary OSS URL used by cloud playback to download a checkpoint.",
         },
+        {
+            "name": "--zero_action",
+            "action": "store_true",
+            "default": False,
+            "help": "Use zero policy residuals during playback; no checkpoint is required.",
+        },
     ]
     # parse arguments
     args = gymutil.parse_arguments(

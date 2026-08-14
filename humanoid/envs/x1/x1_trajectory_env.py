@@ -8,6 +8,7 @@ from isaacgym import gymtorch
 from isaacgym.torch_utils import quat_rotate_inverse
 
 from humanoid.envs.x1.x1_dh_stand_env import X1DHStandEnv, get_euler_xyz_tensor
+from humanoid.envs.x1.trajectory_utils import canonicalize_root_trajectory
 
 
 class X1TrajectoryEnv(X1DHStandEnv):
@@ -49,6 +50,11 @@ class X1TrajectoryEnv(X1DHStandEnv):
             )
         self.walk_total_steps = self.walk_cycle_frames * self.walk_cycle_count
         self.walk_cycle_duration_s = self.walk_cycle_frames / self.reference_rate_hz
+        if not np.isclose(trajectory.gait_period_s, self.walk_cycle_duration_s, atol=1e-6):
+            raise ValueError(
+                f"Configured gait period {trajectory.gait_period_s:g}s does not match "
+                f"the {self.walk_cycle_duration_s:g}s reference cycle"
+            )
         self.walk_cycle_pos_correction = (
             self.reference_dof_pos[self.walk_start_frame]
             - self.reference_dof_pos[self.walk_cycle_boundary_frame]
@@ -153,8 +159,39 @@ class X1TrajectoryEnv(X1DHStandEnv):
         if set(self.dof_names) != set(joint_names):
             raise ValueError(f"Trajectory joints do not match simulator DOFs: {self.dof_names}")
 
+        if self.cfg.trajectory.canonicalize_root:
+            (
+                root_pos,
+                root_quat,
+                root_lin_vel,
+                root_ang_vel,
+                canonical_yaw,
+            ) = canonicalize_root_trajectory(
+                root_pos,
+                root_quat,
+                root_lin_vel,
+                root_ang_vel,
+                self.cfg.trajectory.steady_cycle_start_frame,
+            )
+            self.reference_canonical_yaw = canonical_yaw
+            print(
+                "[X1Trajectory] Canonicalized reference root at frame "
+                f"{self.cfg.trajectory.steady_cycle_start_frame}; removed yaw "
+                f"{np.degrees(canonical_yaw):.2f} deg"
+            )
+        else:
+            self.reference_canonical_yaw = 0.0
+
         source_index = {name: index for index, name in enumerate(joint_names)}
         sim_order = [source_index[name] for name in self.dof_names]
+        residual_scales = self.cfg.trajectory.residual_action_scales
+        if set(residual_scales) != set(self.dof_names):
+            raise ValueError("Residual action scales must define every simulator DOF exactly once")
+        self.residual_action_scales = torch.tensor(
+            [residual_scales[name] for name in self.dof_names],
+            dtype=torch.float,
+            device=self.device,
+        )
         self.reference_time = torch.from_numpy(time.copy()).to(self.device)
         self.reference_dof_pos = torch.from_numpy(qpos[:, sim_order].copy()).to(self.device)
         self.reference_dof_vel = torch.from_numpy(qvel[:, sim_order].copy()).to(self.device)
@@ -376,6 +413,10 @@ class X1TrajectoryEnv(X1DHStandEnv):
 
     def check_termination(self):
         super().check_termination()
+        # Completing the staged motion is a successful finite-horizon
+        # truncation, not a failure that should receive the termination penalty.
+        successful_end = self.motion_ended & ~self.reset_buf.bool()
+        self.time_out_buf |= successful_end
         self.reset_buf |= self.motion_ended
 
     def reset_idx(self, env_ids):
@@ -439,7 +480,14 @@ class X1TrajectoryEnv(X1DHStandEnv):
 
     def _compute_torques(self, actions):
         """Track the reference with an action residual and velocity feed-forward."""
-        target_pos = self.ref_dof_pos + actions * self.cfg.control.action_scale
+        target_pos = self.ref_dof_pos + actions * self.residual_action_scales
+        joint_limit_margin = self.cfg.trajectory.joint_limit_margin_rad
+        target_lower = self.dof_pos_limits[:, 0] + joint_limit_margin
+        target_upper = self.dof_pos_limits[:, 1] - joint_limit_margin
+        if torch.any(target_lower >= target_upper):
+            raise RuntimeError("Joint-limit margin leaves an empty target range")
+        target_pos = torch.maximum(torch.minimum(target_pos, target_upper), target_lower)
+        self.pd_target_dof_pos = target_pos
         torques = self.p_gains * (target_pos - self.dof_pos) + self.d_gains * (self.ref_dof_vel - self.dof_vel)
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
