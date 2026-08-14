@@ -234,6 +234,11 @@ def get_args():
             "type": str,
             "help": "Temporary OSS URL used by cloud playback to download a checkpoint.",
         },
+        {
+            "name": "--checkpoint_url_b64",
+            "type": str,
+            "help": "URL-safe Base64 encoded checkpoint URL for cloud playback.",
+        },
     ]
     # parse arguments
     args = gymutil.parse_arguments(

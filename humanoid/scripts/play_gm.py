@@ -9,6 +9,7 @@
 import os
 import sys
 import glob
+import base64
 import shutil
 import subprocess
 import numpy as np
@@ -196,7 +197,14 @@ def play(args):
     train_cfg.seed = 12345
 
     # Find and load checkpoint
-    checkpoint_path = find_checkpoint(getattr(args, "checkpoint_url", None))
+    checkpoint_url = getattr(args, "checkpoint_url", None)
+    checkpoint_url_b64 = getattr(args, "checkpoint_url_b64", None)
+    if checkpoint_url_b64:
+        padding = "=" * (-len(checkpoint_url_b64) % 4)
+        checkpoint_url = base64.urlsafe_b64decode(
+            (checkpoint_url_b64 + padding).encode("ascii")
+        ).decode("utf-8")
+    checkpoint_path = find_checkpoint(checkpoint_url)
     if checkpoint_path is None:
         print("[play_gm] ERROR: No checkpoint found in /personal/ or logs/")
         sys.exit(1)
