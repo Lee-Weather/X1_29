@@ -192,7 +192,7 @@ CSV 上传问题的根因是 SDK 只监控启动时识别的 checkpoint PT 目�
 最终归档目录 `czy/data/exp0.1/` 仅保留以下三个文件：
 
 - `model_3000.pt`：12,805,506 bytes；
-- `play_output.mp4`：5,086,704 bytes，MP4 `ftypisom` 头校验通过；
+- `play_output.mp4`：21,661,947 bytes，SHA-256 `D26328B010C2B371A0914B3878CA4B3FB5F26C66EA865675F1A27783B0C0655E`；OpenCV/FFmpeg 解码通过，`1920×1080 @ 50 FPS`，实际解码 `1000` 帧；
 - `isaac_diag.csv`：4,976,658 bytes，2000 行 × 146 列，非零诊断行 2000 行。
 
 #### 12.4 最终结论
