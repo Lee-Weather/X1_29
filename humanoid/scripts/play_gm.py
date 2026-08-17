@@ -552,7 +552,8 @@ def play(args):
     # Save diagnostic data
     save_diag_data(diag, train_cfg.runner.experiment_name)
     csv_path = save_diag_csv(diag, train_cfg.runner.experiment_name, env_cfg.env.num_actions, env.dt)
-    csv_pt_path = package_csv_as_pt(csv_path, train_cfg.runner.experiment_name)
+    # GM SDK scans this fixed directory for the diagnostic upload package.
+    csv_pt_path = package_csv_as_pt(csv_path)
 
     # Print summary
     print("\n[play_gm] === Playback Summary ===")
