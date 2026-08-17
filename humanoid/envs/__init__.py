@@ -41,7 +41,11 @@ from .x1.x1_dh_stand_env import X1DHStandEnv
 from .x1.x1_trajectory_config import X1TrajectoryCfg, X1TrajectoryCfgPPO
 from .x1.x1_trajectory_env import X1TrajectoryEnv
 
+from .x1.x1_amp_config import X1AmpCfg, X1AmpCfgPPO
+from .x1.x1_amp_env import X1AmpEnv
+
 from humanoid.utils.task_registry import task_registry
 
 task_registry.register( "x1_dh_stand", X1DHStandEnv, X1DHStandCfg(), X1DHStandCfgPPO() )
 task_registry.register("x1_trajectory", X1TrajectoryEnv, X1TrajectoryCfg(), X1TrajectoryCfgPPO())
+task_registry.register("x1_amp", X1AmpEnv, X1AmpCfg(), X1AmpCfgPPO())

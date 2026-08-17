@@ -50,13 +50,18 @@ class RolloutStorage:
         def clear(self):
             self.__init__()
 
-    def __init__(self, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, num_single_obs=None, device='cpu'):
+    def __init__(self, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, num_single_obs=None, device='cpu', amp_obs_shape=None):
 
         self.device = device
 
         self.obs_shape = obs_shape
         self.privileged_obs_shape = privileged_obs_shape
         self.actions_shape = actions_shape
+        # AMP discriminator observations (only allocated for AMP-style tasks)
+        if amp_obs_shape is not None:
+            self.amp_observations = torch.zeros(num_transitions_per_env, num_envs, *amp_obs_shape, device=self.device)
+        else:
+            self.amp_observations = None
 
         # Core
         self.observations = torch.zeros(num_transitions_per_env, num_envs, *obs_shape, device=self.device)
@@ -170,6 +175,8 @@ class RolloutStorage:
         if self.num_single_obs is not None:
             next_proprio_obs = self.next_proprio_obs.flatten(0, 1)
             rewards = self.rewards.flatten(0, 1)
+        if self.amp_observations is not None:
+            amp_observations = self.amp_observations.flatten(0, 1)
         for epoch in range(num_epochs):
             for i in range(num_mini_batches):
 
@@ -192,5 +199,10 @@ class RolloutStorage:
                     yield next_proprio_obs_batch, rewards_batch, obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
                         old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None
                 else:
-                    yield obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
-                        old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None
+                    if self.amp_observations is not None:
+                        amp_obs_batch = amp_observations[batch_idx]
+                        yield obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
+                            old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None, amp_obs_batch
+                    else:
+                        yield obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
+                            old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None

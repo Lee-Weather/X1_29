@@ -37,6 +37,7 @@ import wandb
 import statistics
 from collections import deque
 from datetime import datetime
+from .amp_ppo import AmpPPO
 from .dh_ppo import DHPPO
 from .actor_critic_dh import ActorCriticDH
 from humanoid.algo.vec_env import VecEnv
@@ -137,7 +138,11 @@ class DHOnPolicyRunner:
                         rewards.to(self.device),
                         dones.to(self.device),
                     )
-                    self.alg.process_env_step(rewards, dones, infos)
+                    amp_obs = (
+                        self.env.get_amp_observations().to(self.device)
+                        if isinstance(self.alg, AmpPPO) else None
+                    )
+                    self.alg.process_env_step(rewards, dones, infos, amp_obs)
 
                     if self.log_dir is not None:
                         # Book keeping
@@ -162,7 +167,11 @@ class DHOnPolicyRunner:
                 start = stop
                 self.alg.compute_returns(critic_obs)
 
-            mean_value_loss, mean_surrogate_loss, mean_state_estimator_loss = self.alg.update()
+            update_stats = self.alg.update()
+            mean_value_loss, mean_surrogate_loss, mean_state_estimator_loss = update_stats[:3]
+            # AMP extras (zero for plain DHPPO runs).
+            mean_disc_loss = update_stats[3] if len(update_stats) > 3 else 0.0
+            mean_style_reward = update_stats[4] if len(update_stats) > 4 else 0.0
             stop = time.time()
             learn_time = stop - start
             if self.log_dir is not None:
@@ -213,6 +222,13 @@ class DHOnPolicyRunner:
         self.writer.add_scalar(
             "Loss/state_estimator", locs["mean_state_estimator_loss"], locs["it"]
         )
+        if isinstance(self.alg, AmpPPO):
+            self.writer.add_scalar(
+                "Loss/amp_discriminator", locs["mean_disc_loss"], locs["it"]
+            )
+            self.writer.add_scalar(
+                "Reward/amp_style", locs["mean_style_reward"], locs["it"]
+            )
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
         self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
@@ -241,7 +257,9 @@ class DHOnPolicyRunner:
             )
 
 
-        for i in range(47):
+        # exp0.2 fix (P3): the hardcoded range(47) left the trajectory task's
+        # last 32 single-frame features (reference + stage signals) unlogged.
+        for i in range(self.env.num_single_obs):
             self.writer.add_scalar('Observation/obs_mean_'+str(i), locs['obs_mean'][i], locs['it'])
             self.writer.add_scalar('Observation/obs_std_'+str(i), locs['obs_std'][i], locs['it'])
 
@@ -304,6 +322,13 @@ class DHOnPolicyRunner:
         if load_optimizer:
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
             self.alg.state_estimator_optimizer.load_state_dict(loaded_dict["es_optimizer_state_dict"])
+            disc = getattr(self.alg, "discriminator", None)
+            if disc is not None and loaded_dict.get("disc_state_dict") is not None:
+                disc.load_state_dict(loaded_dict["disc_state_dict"])
+                if loaded_dict.get("disc_optimizer_state_dict") is not None:
+                    self.alg.disc_optimizer.load_state_dict(
+                        loaded_dict["disc_optimizer_state_dict"]
+                    )
         self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
 
