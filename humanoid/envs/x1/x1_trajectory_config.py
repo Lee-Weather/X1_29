@@ -161,6 +161,16 @@ class X1TrajectoryCfgPPO(X1DHStandCfgPPO):
 
     class algorithm(X1DHStandCfgPPO.algorithm):
         learning_rate = 3e-5
+        # exp0.2 fix: the inherited lin_vel_idx (199) is computed from the
+        # stand task's 73-dim privileged frame. The trajectory critic frame is
+        # 105 dims, so the last frame's base_lin_vel starts at 105*2+53=263.
+        # Without this override the state-estimator supervision target slices
+        # ref_joint_vel instead of base_lin_vel and its loss is meaningless.
+        lin_vel_idx = (
+            X1TrajectoryCfg.env.single_num_privileged_obs
+            * (X1TrajectoryCfg.env.c_frame_stack - 1)
+            + X1TrajectoryCfg.env.single_linvel_index
+        )
 
     class runner(X1DHStandCfgPPO.runner):
         experiment_name = "x1_trajectory"
