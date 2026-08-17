@@ -46,6 +46,7 @@ class RolloutStorage:
             self.action_sigma = None
             self.hidden_states = None
             self.next_proprio_obs = None
+            self.amp_observations = None
         
         def clear(self):
             self.__init__()
@@ -108,6 +109,8 @@ class RolloutStorage:
         self._save_hidden_states(transition.hidden_states)
         if self.num_single_obs is not None:
             self.next_proprio_obs[self.step].copy_(transition.next_proprio_obs)
+        if self.amp_observations is not None:
+            self.amp_observations[self.step].copy_(transition.amp_observations)
         self.step += 1
 
     def _save_hidden_states(self, hidden_states):

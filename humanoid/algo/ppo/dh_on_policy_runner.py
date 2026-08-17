@@ -73,6 +73,17 @@ class DHOnPolicyRunner:
         
         alg_class = eval(self.cfg["algorithm_class_name"])  # PPO
         self.alg: DHPPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
+        # AMP tasks need the discriminator built (and demo sampler bound)
+        # before init_storage allocates the amp observation buffer.
+        if isinstance(self.alg, AmpPPO):
+            if not hasattr(self.env, "get_amp_observations"):
+                raise ValueError(
+                    "AmpPPO requires an environment providing AMP observations "
+                    "(get_amp_observations / sample_demo_amp_obs / num_amp_obs)")
+            self.alg.setup_amp(
+                num_amp_obs=self.env.num_amp_obs,
+                demo_sampler=self.env.sample_demo_amp_obs,
+            )
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
 
@@ -305,11 +316,16 @@ class DHOnPolicyRunner:
         print(log_string)
 
     def save(self, path, infos=None):
+        disc = getattr(self.alg, "discriminator", None)
         torch.save(
             {
                 "model_state_dict": self.alg.actor_critic.state_dict(),
                 "optimizer_state_dict": self.alg.optimizer.state_dict(),
                 "es_optimizer_state_dict": self.alg.state_estimator_optimizer.state_dict(),
+                "disc_state_dict": disc.state_dict() if disc is not None else None,
+                "disc_optimizer_state_dict": (
+                    self.alg.disc_optimizer.state_dict() if disc is not None else None
+                ),
                 "iter": self.it,
                 "infos": infos,
             },
