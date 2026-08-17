@@ -9,6 +9,7 @@
 import os
 import sys
 import glob
+import base64
 import shutil
 import subprocess
 import numpy as np
@@ -83,6 +84,20 @@ def find_checkpoint(checkpoint_url=None):
     except Exception as e:
         print(f"[play_gm] Download error: {e}")
     return None
+
+
+def decode_checkpoint_url_b64(encoded_url):
+    """Decode and validate the URL-safe checkpoint URL passed by GM."""
+    if not encoded_url:
+        return None
+    try:
+        padding = "=" * (-len(encoded_url) % 4)
+        decoded = base64.urlsafe_b64decode(encoded_url + padding).decode("utf-8")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ValueError("Invalid URL-safe Base64 checkpoint URL") from exc
+    if not decoded.startswith(("https://", "http://")):
+        raise ValueError("Decoded checkpoint URL must use HTTP(S)")
+    return decoded
 
 
 def copy_checkpoint_to_logs(checkpoint_path, experiment_name="x1_dh_stand"):
@@ -259,10 +274,15 @@ def play(args):
 
     train_cfg.seed = 12345
 
+    checkpoint_url = getattr(args, "checkpoint_url", None)
+    encoded_checkpoint_url = getattr(args, "checkpoint_url_b64", None)
+    if encoded_checkpoint_url:
+        checkpoint_url = decode_checkpoint_url_b64(encoded_checkpoint_url)
+
     zero_action = bool(getattr(args, "zero_action", False))
     if not zero_action:
         # Find and load checkpoint for normal policy playback.
-        checkpoint_path = find_checkpoint(getattr(args, "checkpoint_url", None))
+        checkpoint_path = find_checkpoint(checkpoint_url)
         if checkpoint_path is None:
             print("[play_gm] ERROR: No checkpoint found in /personal/ or logs/")
             sys.exit(1)

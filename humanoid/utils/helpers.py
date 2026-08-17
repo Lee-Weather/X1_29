@@ -235,6 +235,11 @@ def get_args():
             "help": "Temporary OSS URL used by cloud playback to download a checkpoint.",
         },
         {
+            "name": "--checkpoint_url_b64",
+            "type": str,
+            "help": "URL-safe Base64 encoded checkpoint URL used by cloud playback.",
+        },
+        {
             "name": "--zero_action",
             "action": "store_true",
             "default": False,
