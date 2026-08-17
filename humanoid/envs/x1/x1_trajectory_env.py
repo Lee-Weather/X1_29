@@ -16,6 +16,9 @@ class X1TrajectoryEnv(X1DHStandEnv):
 
     STAND_INITIAL, START, WALK, STOP, STAND_FINAL = range(5)
     STAGE_COUNT = 5
+    # exp0.2: a foot must stay airborne this many consecutive control steps
+    # to count as one valid swing (success criterion 4/5).
+    SWING_MIN_STEPS = 5
 
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
@@ -27,6 +30,25 @@ class X1TrajectoryEnv(X1DHStandEnv):
         )
         self.motion_stage_step = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.motion_ended = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # exp0.2: per-episode diagnostics for the success criteria and play_gm CSV.
+        self.episode_success_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.episode_root_start_xy = torch.zeros(self.num_envs, 2, device=self.device)
+        self.walk_steps_elapsed = torch.zeros(self.num_envs, device=self.device)
+        self.single_support_steps = torch.zeros(self.num_envs, device=self.device)
+        self.swing_streak_l = torch.zeros(self.num_envs, device=self.device)
+        self.swing_streak_r = torch.zeros(self.num_envs, device=self.device)
+        self.swing_count_l = torch.zeros(self.num_envs, device=self.device)
+        self.swing_count_r = torch.zeros(self.num_envs, device=self.device)
+        self.cum_abs_yaw = torch.zeros(self.num_envs, device=self.device)
+        self.last_yaw = torch.zeros(self.num_envs, device=self.device)
+        # Final values of the previous episode; written in reset_idx before the
+        # per-step buffers are cleared so play_gm can log them after `dones`.
+        self.last_episode_success = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.last_forward_displacement_ratio = torch.zeros(self.num_envs, device=self.device)
+        self.last_single_support_ratio = torch.zeros(self.num_envs, device=self.device)
+        self.last_swing_count_l = torch.zeros(self.num_envs, device=self.device)
+        self.last_swing_count_r = torch.zeros(self.num_envs, device=self.device)
+        self.last_cum_abs_yaw = torch.zeros(self.num_envs, device=self.device)
         self._validate_stage_config()
         self.compute_ref_state()
         self._set_reference_commands()
@@ -75,6 +97,24 @@ class X1TrajectoryEnv(X1DHStandEnv):
         }
         if any(steps < 1 for steps in self.stage_duration_steps.values()):
             raise ValueError("Each analytic trajectory stage must last at least one control step")
+
+        # exp0.2: reference xy displacement over the whole staged sequence
+        # (stand -> start -> walk -> stop -> final stand). Environment origins
+        # cancel out, so this is a single scalar shared by all envs. After a
+        # reset, reference_origin_xy equals the walk-start xy, making the walk
+        # start coincide with the env origin while the initial stand starts at
+        # base_init_state[:2] relative to it.
+        initial_xy = torch.as_tensor(
+            self.base_init_state[:2].to(self.device), dtype=torch.float, device=self.device
+        )
+        walk_end_lin_vel_xy = self.reference_root_lin_vel[self.walk_start_frame, :2]
+        final_xy = (
+            self.walk_cycle_count * self.walk_cycle_xy_displacement
+            + 0.5 * trajectory.stop_transition_s * walk_end_lin_vel_xy
+        )
+        self.reference_episode_xy_displacement = float(
+            torch.linalg.vector_norm(final_xy - initial_xy)
+        )
 
     @staticmethod
     def _hermite(position_0, velocity_0, position_1, velocity_1, time, duration):
@@ -410,6 +450,27 @@ class X1TrajectoryEnv(X1DHStandEnv):
         )
         self.compute_ref_state()
         self._set_reference_commands()
+        self._update_episode_diagnostics()
+
+    def _update_episode_diagnostics(self):
+        """Accumulate exp0.2 per-step diagnostics (success criteria + CSV)."""
+        walk_mask = (self.motion_stage == self.WALK).float()
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.0
+        single_support = contact[:, 0] ^ contact[:, 1]
+        self.walk_steps_elapsed += walk_mask
+        self.single_support_steps += single_support.float() * walk_mask
+        for foot, streak, count in (
+            (0, self.swing_streak_l, self.swing_count_l),
+            (1, self.swing_streak_r, self.swing_count_r),
+        ):
+            airborne = ~contact[:, foot]
+            streak += airborne.float()
+            streak[~airborne] = 0.0
+            count += (airborne & (streak == self.SWING_MIN_STEPS)).float()
+        yaw = self.base_euler_xyz[:, 2]
+        delta_yaw = torch.remainder(yaw - self.last_yaw + torch.pi, 2 * torch.pi) - torch.pi
+        self.cum_abs_yaw += delta_yaw.abs()
+        self.last_yaw = yaw
 
     def check_termination(self):
         super().check_termination()
@@ -418,11 +479,38 @@ class X1TrajectoryEnv(X1DHStandEnv):
         successful_end = self.motion_ended & ~self.reset_buf.bool()
         self.time_out_buf |= successful_end
         self.reset_buf |= self.motion_ended
+        # exp0.2: record (never reward) full-trajectory success. Condition 1 is
+        # successful_end itself; an unplanned reset clears the counters below
+        # and can never reach the final step.
+        displacement = torch.linalg.vector_norm(
+            self.root_states[:, :2] - self.episode_root_start_xy, dim=1
+        )
+        self.episode_success_buf |= successful_end & (
+            (displacement / self.reference_episode_xy_displacement >= 0.5)
+            & (self.single_support_steps / self.walk_steps_elapsed.clamp(min=1.0) >= 0.3)
+            & (self.swing_count_l >= 3)
+            & (self.swing_count_r >= 3)
+            & (self.cum_abs_yaw <= 3.0)
+        )
 
     def reset_idx(self, env_ids):
         """Reset selected environments to the analytic initial standing state."""
         if len(env_ids) == 0:
             return
+
+        # exp0.2: snapshot the finished episode's diagnostics before the state
+        # reset overwrites the root position and clears the per-step counters.
+        final_displacement = torch.linalg.vector_norm(
+            self.root_states[env_ids, :2] - self.episode_root_start_xy[env_ids], dim=1
+        )
+        self.last_episode_success[env_ids] = self.episode_success_buf[env_ids]
+        self.last_forward_displacement_ratio[env_ids] = (
+            final_displacement / self.reference_episode_xy_displacement
+        )
+        self.last_single_support_ratio[env_ids] = self.single_support_steps[env_ids] / self.walk_steps_elapsed[env_ids].clamp(min=1.0)
+        self.last_swing_count_l[env_ids] = self.swing_count_l[env_ids]
+        self.last_swing_count_r[env_ids] = self.swing_count_r[env_ids]
+        self.last_cum_abs_yaw[env_ids] = self.cum_abs_yaw[env_ids]
 
         self.reference_frame[env_ids] = self.walk_start_frame
         self.reference_origin_xy[env_ids] = self.reference_root_pos[self.walk_start_frame, :2]
@@ -444,6 +532,16 @@ class X1TrajectoryEnv(X1DHStandEnv):
         self.gym.set_actor_root_state_tensor_indexed(
             self.sim, gymtorch.unwrap_tensor(self.root_states), gymtorch.unwrap_tensor(env_ids_int32), len(env_ids)
         )
+        # exp0.2: the fresh standing pose is the episode displacement origin.
+        self.episode_root_start_xy[env_ids] = self.root_states[env_ids, :2]
+        self.episode_success_buf[env_ids] = False
+        self.walk_steps_elapsed[env_ids] = 0.0
+        self.single_support_steps[env_ids] = 0.0
+        self.swing_streak_l[env_ids] = 0.0
+        self.swing_streak_r[env_ids] = 0.0
+        self.swing_count_l[env_ids] = 0.0
+        self.swing_count_r[env_ids] = 0.0
+        self.cum_abs_yaw[env_ids] = 0.0
 
         self.commands[env_ids] = 0.0
         self._set_reference_commands()
@@ -462,6 +560,9 @@ class X1TrajectoryEnv(X1DHStandEnv):
         for key in self.episode_sums:
             self.extras["episode"]["rew_" + key] = torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             self.episode_sums[key][env_ids] = 0.0
+        # exp0.2: fraction of reset envs that completed the full trajectory
+        # while meeting all six success conditions (logging only, no reward).
+        self.extras["episode"]["episode_success"] = torch.mean(self.last_episode_success[env_ids].float())
         if self.cfg.env.send_timeouts:
             self.extras["time_outs"] = self.time_out_buf
         for history in self.obs_history:
@@ -477,6 +578,9 @@ class X1TrajectoryEnv(X1DHStandEnv):
         self.projected_gravity[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.gravity_vec[env_ids])
         self.base_lin_vel[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.root_states[env_ids, 7:10])
         self.base_ang_vel[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.root_states[env_ids, 10:13])
+        # exp0.2: seed the yaw integrator with the reset orientation so the
+        # first post-reset step does not inject a wrap-around jump.
+        self.last_yaw[env_ids] = self.base_euler_xyz[env_ids, 2]
 
     def _compute_torques(self, actions):
         """Track the reference with an action residual and velocity feed-forward."""
@@ -509,3 +613,29 @@ class X1TrajectoryEnv(X1DHStandEnv):
 
     def _reward_trajectory_root_ang_vel(self):
         return torch.exp(-torch.mean((self.root_states[:, 10:13] - self.ref_root_ang_vel).square(), dim=1) / 1.5**2)
+
+    def _reward_forward_progress(self):
+        """Match the world-frame speed along the reference walking heading.
+
+        A local velocity signal without the position dead zone of
+        `trajectory_root_pos`: standing still while the reference walks keeps
+        this reward near zero instead of near one.
+        """
+        heading = self.walk_cycle_xy_displacement / self.walk_cycle_xy_displacement.norm().clamp(min=1e-8)
+        world_lin_vel = self.root_states[:, 7:10]
+        v_along = world_lin_vel[:, 0] * heading[0] + world_lin_vel[:, 1] * heading[1]
+        v_ref = self.ref_root_lin_vel[:, 0] * heading[0] + self.ref_root_lin_vel[:, 1] * heading[1]
+        return torch.exp(-torch.square(v_along - v_ref) / 0.3**2)
+
+    def _reward_single_support(self):
+        """Reward having exactly one foot on the ground during the WALK stage.
+
+        Phase-agnostic on purpose: the analytic stance mask has not been
+        verified against the actual NPZ foot phases, and hard-binding the
+        reward to a wrong foot would reward the inverted gait. Timing stays
+        with the joint-tracking rewards; this term only breaks the permanent
+        double-support local optimum.
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.0
+        single_support = contact[:, 0] ^ contact[:, 1]
+        return (single_support & (self.motion_stage == self.WALK)).float()

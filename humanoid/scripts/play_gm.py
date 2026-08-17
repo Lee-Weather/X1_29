@@ -164,6 +164,8 @@ def save_diag_csv(diag_data, experiment_name="x1_dh_stand", num_actions=12, dt=0
                "ref_root_quat_x", "ref_root_quat_y", "ref_root_quat_z", "ref_root_quat_w",
                "ref_root_lin_vel_x", "ref_root_lin_vel_y", "ref_root_lin_vel_z",
                "ref_root_ang_vel_x", "ref_root_ang_vel_y", "ref_root_ang_vel_z"]
+    header += ["forward_displacement_ratio", "single_support_ratio",
+               "swing_count_l", "swing_count_r", "cum_abs_yaw", "episode_success"]
 
     def value(data, key, index, default=np.nan):
         values = data.get(key)
@@ -224,6 +226,12 @@ def save_diag_csv(diag_data, experiment_name="x1_dh_stand", num_actions=12, dt=0
             row += row_values(diag_data, "ref_root_quat", i, 4)
             row += row_values(diag_data, "ref_root_lin_vel", i, 3)
             row += row_values(diag_data, "ref_root_ang_vel", i, 3)
+            row += [value(diag_data, "forward_displacement_ratio", i),
+                    value(diag_data, "single_support_ratio", i),
+                    value(diag_data, "swing_count_l", i),
+                    value(diag_data, "swing_count_r", i),
+                    value(diag_data, "cum_abs_yaw", i),
+                    value(diag_data, "episode_success", i)]
             writer.writerow(row)
 
     print(f"[play_gm] Saved diagnostic CSV -> {csv_path}")
@@ -396,6 +404,14 @@ def play(args):
         "ref_root_quat": [],
         "ref_root_lin_vel": [],
         "ref_root_ang_vel": [],
+        # exp0.2 episode-level diagnostics (per-step running values; the last
+        # row of an episode carries its final value).
+        "forward_displacement_ratio": [],
+        "single_support_ratio": [],
+        "swing_count_l": [],
+        "swing_count_r": [],
+        "cum_abs_yaw": [],
+        "episode_success": [],
     }
 
     # The trajectory task derives commands from the current reference. Replacing
@@ -421,6 +437,36 @@ def play(args):
         if tensor is None or not torch.is_tensor(tensor):
             return default
         return tensor[0].detach().cpu().item()
+
+    def episode_diag_row(done):
+        """exp0.2 running episode diagnostics; nan when the task lacks them."""
+        def val(name, default=np.nan):
+            tensor = getattr(env, name, None)
+            if tensor is None or not torch.is_tensor(tensor):
+                return default
+            return tensor[0].detach().cpu().item()
+
+        start_xy = getattr(env, "episode_root_start_xy", None)
+        ref_disp = getattr(env, "reference_episode_xy_displacement", None)
+        if start_xy is not None and torch.is_tensor(start_xy) and ref_disp:
+            displacement = torch.linalg.vector_norm(env.root_states[0, :2] - start_xy[0]).item()
+            forward_displacement_ratio = displacement / ref_disp
+        else:
+            forward_displacement_ratio = np.nan
+        walk_steps = val("walk_steps_elapsed", 0.0)
+        single_steps = val("single_support_steps", 0.0)
+        single_support_ratio = single_steps / walk_steps if walk_steps > 0 else np.nan
+        # Success is only defined once the episode ends; reset_idx snapshots it
+        # into last_episode_success before clearing the counters.
+        episode_success = val("last_episode_success") if done else np.nan
+        return {
+            "forward_displacement_ratio": forward_displacement_ratio,
+            "single_support_ratio": single_support_ratio,
+            "swing_count_l": val("swing_count_l"),
+            "swing_count_r": val("swing_count_r"),
+            "cum_abs_yaw": val("cum_abs_yaw"),
+            "episode_success": episode_success,
+        }
 
     for i in range(total_steps):
         # Capture the state and reference used for the action.  The environment
@@ -524,6 +570,8 @@ def play(args):
         diag["ref_root_quat"].append(ref_root_quat)
         diag["ref_root_lin_vel"].append(ref_root_lin_vel)
         diag["ref_root_ang_vel"].append(ref_root_ang_vel)
+        for key, value in episode_diag_row(bool(dones[0].item())).items():
+            diag[key].append(value)
 
         # Render and record video frame
         frame_count += 1

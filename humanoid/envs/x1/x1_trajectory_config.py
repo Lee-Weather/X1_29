@@ -105,13 +105,18 @@ class X1TrajectoryCfg(X1DHStandCfg):
         joint_limit_margin_rad = 0.025
 
     class rewards(X1DHStandCfg.rewards):
+        # The inherited only_positive_rewards=True clips every per-step negative
+        # reward to zero, silently disabling foot_slip/action_smoothness/collision
+        # and the other penalties below. exp0.2 relies on those penalties.
+        only_positive_rewards = False
+
         class scales(X1DHStandCfg.rewards.scales):
             # Disable the analytic-gait objectives inherited from x1_dh_stand.
             ref_joint_pos = 0.0
             feet_clearance = 0.0
             feet_contact_number = 0.0
             feet_air_time = 0.0
-            foot_slip = 0.0
+            foot_slip = -0.5
             feet_distance = 0.0
             knee_distance = 0.0
             feet_contact_forces = 0.0
@@ -127,13 +132,17 @@ class X1TrajectoryCfg(X1DHStandCfg):
             base_acc = 0.0
             stand_still = 0.0
 
-            trajectory_joint_pos = 4.0
+            # exp0.2: reduce posture dominance, strengthen forward velocity and
+            # yaw-rate tracking, and add forward-progress/single-support shaping.
+            trajectory_joint_pos = 3.0
             trajectory_joint_vel = 1.0
             trajectory_root_pos = 1.5
             trajectory_root_ori = 1.5
-            trajectory_root_lin_vel = 1.5
-            trajectory_root_ang_vel = 0.5
-            termination = -200.0
+            trajectory_root_lin_vel = 2.0
+            trajectory_root_ang_vel = 1.0
+            forward_progress = 1.5
+            single_support = 0.8
+            termination = -300.0
 
             action_smoothness = -0.002
             torques = -8e-9
@@ -148,12 +157,14 @@ class X1TrajectoryCfg(X1DHStandCfg):
 class X1TrajectoryCfgPPO(X1DHStandCfgPPO):
     """PPO configuration kept separate from the baseline task."""
 
+    seed = 7
+
     class algorithm(X1DHStandCfgPPO.algorithm):
-        learning_rate = 1e-5
+        learning_rate = 3e-5
 
     class runner(X1DHStandCfgPPO.runner):
         experiment_name = "x1_trajectory"
-        run_name = "exp0_1"
-        max_iterations = 3000
+        run_name = "exp0_2"
+        max_iterations = 4000
         save_interval = 100
         resume = False
