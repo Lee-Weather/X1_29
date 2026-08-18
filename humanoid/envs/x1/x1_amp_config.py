@@ -27,6 +27,25 @@ class X1AmpCfg(X1TrajectoryCfg):
         steady_cycle_start_frame = 64
         steady_cycle_frames = 218
         gait_period_s = 2.18
+        # exp0.7: halve residual authority. exp0.6 replay showed max|action|
+        # pinned at 1.0 for the whole WALK stage while vx ran away backward
+        # to -2.6 m/s: the policy fights the PD feedforward with saturated
+        # residuals and topples itself. Half scales keep even a saturated
+        # policy inside the near-statically-stable corridor of the slow gait.
+        residual_action_scales = {
+            "left_hip_pitch_joint": 0.10,
+            "left_hip_roll_joint": 0.06,
+            "left_hip_yaw_joint": 0.06,
+            "left_knee_pitch_joint": 0.10,
+            "left_ankle_pitch_joint": 0.04,
+            "left_ankle_roll_joint": 0.04,
+            "right_hip_pitch_joint": 0.10,
+            "right_hip_roll_joint": 0.06,
+            "right_hip_yaw_joint": 0.06,
+            "right_knee_pitch_joint": 0.10,
+            "right_ankle_pitch_joint": 0.04,
+            "right_ankle_roll_joint": 0.04,
+        }
 
     class rewards(X1TrajectoryCfg.rewards):
         class scales(X1TrajectoryCfg.rewards.scales):
@@ -46,6 +65,10 @@ class X1AmpCfg(X1TrajectoryCfg):
             # symmetric exp kernel of forward_progress cannot stop lunges.
             forward_overspeed = -1.0
             single_support = 0.8
+            # exp0.7: raise the action-magnitude component of the inherited
+            # smoothness term (diff + diff2 + 0.05*sum|a|) to directly
+            # discourage the saturated bang-bang residuals seen in exp0.6.
+            action_smoothness = -0.01
             # Style rewards are batch-centered inside AmpPPO, but -300 would
             # still dominate the value targets; use a moderate failure penalty.
             termination = -50.0
@@ -54,7 +77,7 @@ class X1AmpCfg(X1TrajectoryCfg):
 class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     """PPO + AMP discriminator training configuration."""
 
-    seed = 12
+    seed = 13
 
     class algorithm(X1TrajectoryCfgPPO.algorithm):
         # AMP discriminator hyperparameters (robolab RPO-Amp starting point).
@@ -72,4 +95,4 @@ class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     class runner(X1TrajectoryCfgPPO.runner):
         algorithm_class_name = "AmpPPO"
         experiment_name = "x1_amp"
-        run_name = "exp0_6_amp"
+        run_name = "exp0_7_amp"
