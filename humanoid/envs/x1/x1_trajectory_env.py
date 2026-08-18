@@ -222,6 +222,40 @@ class X1TrajectoryEnv(X1DHStandEnv):
         else:
             self.reference_canonical_yaw = 0.0
 
+        # exp0.6: optional reference playback speed. time_scale < 1 slows the
+        # motion down: frames are upsampled by 1/time_scale (positions and
+        # quaternions linearly interpolated, quaternions renormalized) and all
+        # velocities are multiplied by time_scale so the slowed trajectory is
+        # physically consistent. Config frame indices (steady cycle window)
+        # must then be expressed in the upsampled timeline.
+        time_scale = float(getattr(self.cfg.trajectory, "reference_time_scale", 1.0))
+        if not np.isclose(time_scale, 1.0):
+            if time_scale <= 0.0:
+                raise ValueError("reference_time_scale must be positive")
+            old_time = time.astype(np.float64)
+            new_num = int(round((len(old_time) - 1) / time_scale)) + 1
+            new_time = (np.arange(new_num, dtype=np.float64) / rate_hz).astype(np.float32)
+            sampled_t = np.clip(new_time * time_scale, old_time[0], old_time[-1])
+
+            def interp_rows(arr):
+                return np.stack(
+                    [np.interp(sampled_t, old_time, arr[:, d]) for d in range(arr.shape[1])],
+                    axis=1,
+                ).astype(np.float32)
+
+            qpos = interp_rows(qpos)
+            qvel = interp_rows(qvel) * time_scale
+            root_pos = interp_rows(root_pos)
+            root_quat = interp_rows(root_quat)
+            root_quat /= np.linalg.norm(root_quat, axis=1, keepdims=True)
+            root_lin_vel = interp_rows(root_lin_vel) * time_scale
+            root_ang_vel = interp_rows(root_ang_vel) * time_scale
+            time = new_time
+            print(
+                f"[X1Trajectory] reference_time_scale={time_scale:g}: resampled "
+                f"{len(old_time)} -> {new_num} frames"
+            )
+
         source_index = {name: index for index, name in enumerate(joint_names)}
         sim_order = [source_index[name] for name in self.dof_names]
         residual_scales = self.cfg.trajectory.residual_action_scales

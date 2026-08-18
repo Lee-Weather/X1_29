@@ -64,6 +64,10 @@ class X1TrajectoryCfg(X1DHStandCfg):
         )
         expected_rate_hz = 100.0
         canonicalize_root = True
+        # exp0.6: playback speed of the packaged reference (1.0 = native).
+        # Values below 1 slow the motion down; steady-cycle frame indices and
+        # gait_period_s below must then be given in the resampled timeline.
+        reference_time_scale = 1.0
         gait_period_s = 1.09
         # A near-periodic 1.09 s unit selected from the retargeted steady walk.
         # The state at frame 141 is matched to frame 32 before repeating.

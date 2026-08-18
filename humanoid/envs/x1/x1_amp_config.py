@@ -14,6 +14,19 @@ class X1AmpCfg(X1TrajectoryCfg):
         # exp0.4: fraction of resets that drop the env directly into a random
         # mid-WALK phase instead of the staged stand->walk->stand sequence.
         random_phase_reset_prob = 0.8
+        # exp0.6: the slowed walk (3 x 2.18 s cycles + 2.4 s transitions)
+        # needs a longer horizon: 654 + 240 = 894 steps plus margin.
+        episode_length_s = 9.2
+
+    class trajectory(X1TrajectoryCfg.trajectory):
+        # exp0.6 (plan A): train at half speed first. The 0.6 m/s gait left
+        # every policy so far in a fall-at-the-WALK-entry deadlock; 0.3 m/s
+        # has far larger static stability margin and is the reachable rung.
+        # Frame indices below are in the 2x upsampled timeline (861 frames).
+        reference_time_scale = 0.5
+        steady_cycle_start_frame = 64
+        steady_cycle_frames = 218
+        gait_period_s = 2.18
 
     class rewards(X1TrajectoryCfg.rewards):
         class scales(X1TrajectoryCfg.rewards.scales):
@@ -41,7 +54,7 @@ class X1AmpCfg(X1TrajectoryCfg):
 class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     """PPO + AMP discriminator training configuration."""
 
-    seed = 11
+    seed = 12
 
     class algorithm(X1TrajectoryCfgPPO.algorithm):
         # AMP discriminator hyperparameters (robolab RPO-Amp starting point).
@@ -59,4 +72,4 @@ class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     class runner(X1TrajectoryCfgPPO.runner):
         algorithm_class_name = "AmpPPO"
         experiment_name = "x1_amp"
-        run_name = "exp0_5r_amp"
+        run_name = "exp0_6_amp"
