@@ -41,7 +41,7 @@ class X1AmpCfg(X1TrajectoryCfg):
 class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     """PPO + AMP discriminator training configuration."""
 
-    seed = 10
+    seed = 11
 
     class algorithm(X1TrajectoryCfgPPO.algorithm):
         # AMP discriminator hyperparameters (robolab RPO-Amp starting point).
@@ -59,4 +59,4 @@ class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     class runner(X1TrajectoryCfgPPO.runner):
         algorithm_class_name = "AmpPPO"
         experiment_name = "x1_amp"
-        run_name = "exp0_5_amp"
+        run_name = "exp0_5r_amp"

@@ -676,7 +676,12 @@ class X1TrajectoryEnv(X1DHStandEnv):
         v_ref = self.ref_root_lin_vel[:, 0] * heading[0] + self.ref_root_lin_vel[:, 1] * heading[1]
         threshold = 1.5 * v_ref.abs()
         overshoot = (v_along - threshold).clamp(min=0.0)
-        return -torch.square(overshoot) / 0.3**2
+        # exp0.5r fix: return a positive penalty magnitude; legged_gym
+        # combines reward terms as scale * term, and the config scale is
+        # negative (-1.0). The previous minus sign here inverted the whole
+        # term into a lunge reward (exp0.5 overspeed "reward" rose 0.28 ->
+        # 0.65 and episodes never grew past ~100 steps).
+        return torch.square(overshoot) / 0.3**2
 
     def _reward_single_support(self):
         """Reward having exactly one foot on the ground during the WALK stage.
