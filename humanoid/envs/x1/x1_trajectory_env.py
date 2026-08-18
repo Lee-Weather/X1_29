@@ -661,6 +661,23 @@ class X1TrajectoryEnv(X1DHStandEnv):
         v_ref = self.ref_root_lin_vel[:, 0] * heading[0] + self.ref_root_lin_vel[:, 1] * heading[1]
         return torch.exp(-torch.square(v_along - v_ref) / 0.3**2)
 
+    def _reward_forward_overspeed(self):
+        """Penalize forward speed overshoot beyond 1.5x the reference speed.
+
+        exp0.4 replay showed vx peaking at 2.83 m/s against a 0.6 m/s
+        reference right before the fall; `forward_progress` alone does not
+        stop this lunge because its exp kernel is symmetric and already
+        saturated on the high side. Below the threshold this term is zero,
+        so standing (v_ref ~= 0, threshold ~= 0) is unaffected.
+        """
+        heading = self.walk_cycle_xy_displacement / self.walk_cycle_xy_displacement.norm().clamp(min=1e-8)
+        world_lin_vel = self.root_states[:, 7:10]
+        v_along = world_lin_vel[:, 0] * heading[0] + world_lin_vel[:, 1] * heading[1]
+        v_ref = self.ref_root_lin_vel[:, 0] * heading[0] + self.ref_root_lin_vel[:, 1] * heading[1]
+        threshold = 1.5 * v_ref.abs()
+        overshoot = (v_along - threshold).clamp(min=0.0)
+        return -torch.square(overshoot) / 0.3**2
+
     def _reward_single_support(self):
         """Reward having exactly one foot on the ground during the WALK stage.
 

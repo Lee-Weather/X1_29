@@ -17,16 +17,21 @@ class X1AmpCfg(X1TrajectoryCfg):
 
     class rewards(X1TrajectoryCfg.rewards):
         class scales(X1TrajectoryCfg.rewards.scales):
-            # Hand-written style terms are replaced by the discriminator
-            # reward; keep weak root anchors, forward progress, single-support
-            # shaping, and the full penalty group.
-            trajectory_joint_pos = 0.0
+            # The discriminator only scores window-level style; exp0.4 showed
+            # that without per-joint accuracy the residuals run away (WALK
+            # joint error 0.47 rad, vx lunge to 2.83 m/s before the fall).
+            # Re-anchor joint accuracy at a mid weight: high enough to bound
+            # the residuals, low enough to keep the stepping drive alive.
+            trajectory_joint_pos = 1.5
             trajectory_joint_vel = 0.0
             trajectory_root_pos = 0.5
             trajectory_root_ori = 0.0
             trajectory_root_lin_vel = 0.5
             trajectory_root_ang_vel = 0.0
             forward_progress = 1.5
+            # exp0.5: penalize forward speed beyond 1.5x reference; the
+            # symmetric exp kernel of forward_progress cannot stop lunges.
+            forward_overspeed = -1.0
             single_support = 0.8
             # Style rewards are batch-centered inside AmpPPO, but -300 would
             # still dominate the value targets; use a moderate failure penalty.
@@ -36,7 +41,7 @@ class X1AmpCfg(X1TrajectoryCfg):
 class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     """PPO + AMP discriminator training configuration."""
 
-    seed = 9
+    seed = 10
 
     class algorithm(X1TrajectoryCfgPPO.algorithm):
         # AMP discriminator hyperparameters (robolab RPO-Amp starting point).
@@ -54,4 +59,4 @@ class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     class runner(X1TrajectoryCfgPPO.runner):
         algorithm_class_name = "AmpPPO"
         experiment_name = "x1_amp"
-        run_name = "exp0_4_amp"
+        run_name = "exp0_5_amp"
