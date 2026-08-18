@@ -18,6 +18,30 @@ class X1AmpCfg(X1TrajectoryCfg):
         # needs a longer horizon: 654 + 240 = 894 steps plus margin.
         episode_length_s = 9.2
 
+    class control(X1TrajectoryCfg.control):
+        # exp0.8: the stand-task PD gains cannot track the walk reference.
+        # exp0.6t zero-action replay: pure PD falls every 1.70 s at BOTH
+        # full and half speed with hip_pitch tracking error 0.295 rad
+        # (max 0.89) and hip_yaw max 1.12 rad - the failure is structural
+        # gain deficiency, not speed. Roughly double stiffness for the
+        # walking legs (knee already tracks at 0.08 rad, keep it).
+        stiffness = {
+            "hip_pitch_joint": 80,
+            "hip_roll_joint": 80,
+            "hip_yaw_joint": 70,
+            "knee_pitch_joint": 120,
+            "ankle_pitch_joint": 70,
+            "ankle_roll_joint": 70,
+        }
+        damping = {
+            "hip_pitch_joint": 4.0,
+            "hip_roll_joint": 4.0,
+            "hip_yaw_joint": 4.0,
+            "knee_pitch_joint": 10.0,
+            "ankle_pitch_joint": 2.0,
+            "ankle_roll_joint": 2.0,
+        }
+
     class trajectory(X1TrajectoryCfg.trajectory):
         # exp0.6 (plan A): train at half speed first. The 0.6 m/s gait left
         # every policy so far in a fall-at-the-WALK-entry deadlock; 0.3 m/s
@@ -77,7 +101,7 @@ class X1AmpCfg(X1TrajectoryCfg):
 class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     """PPO + AMP discriminator training configuration."""
 
-    seed = 13
+    seed = 14
 
     class algorithm(X1TrajectoryCfgPPO.algorithm):
         # AMP discriminator hyperparameters (robolab RPO-Amp starting point).
@@ -95,4 +119,4 @@ class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     class runner(X1TrajectoryCfgPPO.runner):
         algorithm_class_name = "AmpPPO"
         experiment_name = "x1_amp"
-        run_name = "exp0_7_amp"
+        run_name = "exp0_8_amp"
