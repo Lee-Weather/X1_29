@@ -153,7 +153,12 @@ class DHOnPolicyRunner:
                         self.env.get_amp_observations().to(self.device)
                         if isinstance(self.alg, AmpPPO) else None
                     )
-                    self.alg.process_env_step(rewards, dones, infos, amp_obs)
+                    amp_mask = (
+                        self.env.get_amp_reward_mask()
+                        if amp_obs is not None and hasattr(self.env, "get_amp_reward_mask")
+                        else None
+                    )
+                    self.alg.process_env_step(rewards, dones, infos, amp_obs, amp_mask)
 
                     if self.log_dir is not None:
                         # Book keeping

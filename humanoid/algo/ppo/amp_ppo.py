@@ -111,16 +111,20 @@ class AmpPPO(DHPPO):
         grad_norm = torch.norm(grad, dim=1)
         return 0.5 * disc_loss + self.amp_grad_penalty * torch.square(grad_norm - 1.0).mean()
 
-    def process_env_step(self, rewards, dones, infos, amp_obs=None):
+    def process_env_step(self, rewards, dones, infos, amp_obs=None, amp_mask=None):
         if amp_obs is not None:
             with torch.no_grad():
                 style = self._style_reward(amp_obs)
-                self._style_reward_sum += float(style.mean())
+                if amp_mask is not None:
+                    # Batch-center only across masked (WALK) envs so standing
+                    # phases neither receive nor dilute the style signal.
+                    mask = amp_mask.to(self.device)
+                    masked_mean = (style * mask).sum() / mask.sum().clamp(min=1.0)
+                    style = (style - masked_mean) * mask
+                else:
+                    style = style - style.mean()
+                self._style_reward_sum += float(style.sum())
                 self._style_reward_count += 1
-                # Batch-center: only the relative style ranking enters the
-                # reward so the signal cannot drift against the termination
-                # penalty's magnitude.
-                style = style - style.mean()
             rewards = rewards + self.amp_style_weight * style
             self.transition.amp_observations = amp_obs
         super().process_env_step(rewards, dones, infos)

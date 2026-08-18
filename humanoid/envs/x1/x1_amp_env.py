@@ -83,6 +83,12 @@ class X1AmpEnv(X1TrajectoryEnv):
     def get_amp_observations(self):
         return self.amp_obs_buf
 
+    def get_amp_reward_mask(self):
+        """Style rewards only apply while the env is in the steady-walk stage;
+        standing/transition phases are judged against a walk discriminator and
+        would otherwise be penalized for correctly standing still."""
+        return (self.motion_stage == self.WALK).float()
+
     def sample_demo_amp_obs(self, num_samples):
         idx = torch.randint(
             0, self.demo_amp_obs_stacked.shape[0], (num_samples,), device=self.device)

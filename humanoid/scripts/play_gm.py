@@ -307,6 +307,11 @@ def play(args):
 
     # Create environment (headless with rendering enabled)
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
+    # exp0.4: evaluation replays always use the full staged sequence; random
+    # mid-WALK resets are a training-only distribution.
+    if hasattr(env, "cfg") and hasattr(env.cfg.env, "random_phase_reset_prob"):
+        env.cfg.env.random_phase_reset_prob = 0.0
+        print("[play_gm] random_phase_reset_prob forced to 0.0 for evaluation")
     env.set_camera(env_cfg.viewer.pos, env_cfg.viewer.lookat)
 
     policy = None

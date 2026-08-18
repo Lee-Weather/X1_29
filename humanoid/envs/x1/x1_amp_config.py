@@ -10,6 +10,11 @@ class X1AmpCfg(X1TrajectoryCfg):
     trajectory from X1TrajectoryCfg; only the reward mix changes.
     """
 
+    class env(X1TrajectoryCfg.env):
+        # exp0.4: fraction of resets that drop the env directly into a random
+        # mid-WALK phase instead of the staged stand->walk->stand sequence.
+        random_phase_reset_prob = 0.8
+
     class rewards(X1TrajectoryCfg.rewards):
         class scales(X1TrajectoryCfg.rewards.scales):
             # Hand-written style terms are replaced by the discriminator
@@ -31,14 +36,17 @@ class X1AmpCfg(X1TrajectoryCfg):
 class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     """PPO + AMP discriminator training configuration."""
 
-    seed = 8
+    seed = 9
 
     class algorithm(X1TrajectoryCfgPPO.algorithm):
         # AMP discriminator hyperparameters (robolab RPO-Amp starting point).
         amp_style_weight = 1.5
         amp_disc_hidden_dims = [1024, 512]
         amp_disc_activation = "elu"
-        amp_disc_lr = 1.0e-4
+        # exp0.4: 1e-4 let the discriminator win instantly in exp0.3 (loss
+        # ~1e-5, style reward saturated, zero effective gradient). Slow it
+        # down so logits stay discriminative across policy samples.
+        amp_disc_lr = 1.0e-5
         amp_grad_penalty = 10.0
         amp_disc_max_grad_norm = 1.0
         amp_loss_type = "lsgan"
@@ -46,4 +54,4 @@ class X1AmpCfgPPO(X1TrajectoryCfgPPO):
     class runner(X1TrajectoryCfgPPO.runner):
         algorithm_class_name = "AmpPPO"
         experiment_name = "x1_amp"
-        run_name = "exp0_3_amp"
+        run_name = "exp0_4_amp"

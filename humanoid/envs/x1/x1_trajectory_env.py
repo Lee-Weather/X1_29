@@ -512,11 +512,36 @@ class X1TrajectoryEnv(X1DHStandEnv):
         self.last_swing_count_r[env_ids] = self.swing_count_r[env_ids]
         self.last_cum_abs_yaw[env_ids] = self.cum_abs_yaw[env_ids]
 
-        self.reference_frame[env_ids] = self.walk_start_frame
-        self.reference_origin_xy[env_ids] = self.reference_root_pos[self.walk_start_frame, :2]
-        self.motion_stage[env_ids] = self.STAND_INITIAL
-        self.motion_stage_step[env_ids] = 0
-        self.motion_ended[env_ids] = False
+        # exp0.4: split resets between the full staged sequence and random
+        # mid-WALK phases so the policy practices balance across the whole
+        # gait cycle instead of only from a static standstill start.
+        random_prob = getattr(self.cfg.env, "random_phase_reset_prob", 0.0)
+        use_random_phase = (
+            torch.rand(len(env_ids), device=self.device) < random_prob
+        )
+        random_ids = env_ids[use_random_phase]
+        staged_ids = env_ids[~use_random_phase]
+
+        if len(random_ids) > 0:
+            # Drop these envs directly into a random WALK step. The reference
+            # state machine is set first so compute_ref_state() produces the
+            # exact (cycle-corrected) targets for that phase, and the robot
+            # is initialized to match its upcoming PD target.
+            walk_steps = torch.randint(
+                0, self.walk_total_steps, (len(random_ids),), device=self.device
+            )
+            self.motion_stage[random_ids] = self.WALK
+            self.motion_stage_step[random_ids] = walk_steps
+            self.motion_ended[random_ids] = False
+            self.reference_origin_xy[random_ids] = self.reference_root_pos[
+                self.walk_start_frame, :2
+            ]
+
+        self.reference_frame[staged_ids] = self.walk_start_frame
+        self.reference_origin_xy[staged_ids] = self.reference_root_pos[self.walk_start_frame, :2]
+        self.motion_stage[staged_ids] = self.STAND_INITIAL
+        self.motion_stage_step[staged_ids] = 0
+        self.motion_ended[staged_ids] = False
         self.compute_ref_state()
 
         self.dof_pos[env_ids] = self.ref_dof_pos[env_ids]
@@ -525,6 +550,15 @@ class X1TrajectoryEnv(X1DHStandEnv):
         self.root_states[env_ids, 3:7] = self.ref_root_quat[env_ids]
         self.root_states[env_ids, 7:10] = self.ref_root_lin_vel[env_ids]
         self.root_states[env_ids, 10:13] = self.ref_root_ang_vel[env_ids]
+        if len(random_ids) > 0:
+            # Small state jitter so mid-gait balance is not initialized to the
+            # exact reference (BeyondMimic-style pose/velocity disturbance).
+            self.dof_pos[random_ids] += 0.03 * (
+                2.0 * torch.rand_like(self.dof_pos[random_ids]) - 1.0
+            )
+            self.root_states[random_ids, 7:10] += 0.05 * (
+                2.0 * torch.rand_like(self.root_states[random_ids, 7:10]) - 1.0
+            )
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_dof_state_tensor_indexed(
             self.sim, gymtorch.unwrap_tensor(self.dof_state), gymtorch.unwrap_tensor(env_ids_int32), len(env_ids)
