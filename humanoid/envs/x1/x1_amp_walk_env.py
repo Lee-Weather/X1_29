@@ -14,6 +14,7 @@ env walks continuously until it falls or times out.
 """
 
 import torch
+from isaacgym import gymtorch
 
 from humanoid.envs.x1.x1_amp_env import X1AmpEnv
 
