@@ -13,7 +13,7 @@ class X1AmpWalkCfg(X1AmpCfg):
 
     class walk:
         speed = 0.3  # m/s forward command (matches the half-speed demo)
-        base_height = 0.62  # nominal torso height while walking [m]
+        base_height = 0.62  # NPZ stand frame root height is 0.618 m
 
     class control(X1AmpCfg.control):
         # Uniform default-relative action scale (robolab RPO-Amp value).
@@ -39,8 +39,8 @@ class X1AmpWalkCfg(X1AmpCfg):
 class X1AmpWalkCfgPPO(X1AmpCfgPPO):
     """PPO + AMP training configuration for the command-driven walk task."""
 
-    seed = 15
+    seed = 16
 
     class runner(X1AmpCfgPPO.runner):
         experiment_name = "x1_amp_walk"
-        run_name = "exp0_9r_amp_walk"
+        run_name = "exp0_9r3_amp_walk"

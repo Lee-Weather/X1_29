@@ -11,6 +11,10 @@ offsets from the default pose (uniform scale), the D term uses measured
 velocities, and the gait is shaped by the AMP discriminator plus a constant
 forward-velocity command. The five-stage state machine is bypassed - every
 env walks continuously until it falls or times out.
+
+exp0.9r3: spawn/default pose come from the NPZ standing frame (frame 0),
+whose FK was validated in exp0.1t; the r2 variant spawned at init_state
+(z=0.7 with a mismatched default pose) and never survived the first step.
 """
 
 import torch
@@ -25,36 +29,50 @@ class X1AmpWalkEnv(X1AmpEnv):
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
         cfg.env.random_phase_reset_prob = 0.0  # always reset to standing
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
+        # exp0.9r3: adopt the NPZ standing pose as the default pose. Zero-action
+        # PD targets then hold the FK-consistent stand (exp0.1t-validated),
+        # and the (dof_pos - default) observation normalization matches spawn.
+        self.default_dof_pos = self.reference_dof_pos[0].clone()
+
+    @property
+    def stand_root_z(self):
+        """Root height of the NPZ standing frame (0.6179 m, FK-consistent)."""
+        return float(self.reference_root_pos[0, 2])
 
     def compute_ref_state(self):
         """Replace the staged reference with a constant walk command.
 
         The observation slots keep their layout (79 single-frame dims), but
-        reference-dependent blocks become constants: default pose, zero joint
-        velocities, upright orientation, and a root velocity equal to the
-        walk command. Rewards that compare against these slots degenerate
-        into pure velocity tracking.
+        reference-dependent blocks become constants: standing pose, zero joint
+        velocities, upright orientation, and a root velocity equal to the walk
+        command. Rewards that compare against these slots degenerate into
+        pure velocity tracking.
 
-        exp0.9r fix: reset_idx copies ref_root_pos_w into the root state, so
-        this slot must hold the nominal standing spawn (base_init_state
-        height, current xy) - NOT the fallen robot's position, which the
-        first version cloned from root_states and made every episode spawn
-        at ground level / underground and get ejected by ground contact.
+        ref_root_pos_w must hold the nominal standing spawn (NPZ frame-0
+        height, current xy): reset_idx copies it into the root state, so
+        cloning the fallen robot's position would spawn every episode at
+        ground level (exp0.9 bug).
         """
         walk_speed = self.cfg.walk.speed
         self.ref_dof_pos = self.default_dof_pos.repeat(self.num_envs, 1)
         self.ref_dof_vel = torch.zeros_like(self.ref_dof_pos)
-        self.ref_root_quat = self.base_init_state[3:7].repeat(self.num_envs, 1).to(self.device)
+        self.ref_root_quat = torch.zeros(self.num_envs, 4, device=self.device)
+        self.ref_root_quat[:, 3] = 1.0  # identity (upright)
         self.ref_root_lin_vel = torch.zeros(self.num_envs, 3, device=self.device)
         self.ref_root_lin_vel[:, 0] = walk_speed
         self.ref_root_ang_vel = torch.zeros(self.num_envs, 3, device=self.device)
         self.ref_root_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
         self.ref_root_pos_w[:, 0] = self.root_states[:, 0]
         self.ref_root_pos_w[:, 1] = self.root_states[:, 1]
-        self.ref_root_pos_w[:, 2] = float(self.base_init_state[2])
+        self.ref_root_pos_w[:, 2] = self.stand_root_z
 
     def reset_idx(self, env_ids):
-        """Spawn at the nominal standing state (no staged/random phases)."""
+        """Spawn at the NPZ standing state (no staged/random phases).
+
+        exp0.9r3 accounting fix: the r2 override forgot to zero
+        episode_length_buf, so after the first 920 steps every step tripped
+        time_out and episodes collapsed to length 1 forever.
+        """
         if len(env_ids) == 0:
             return
         self.compute_ref_state()
@@ -62,8 +80,10 @@ class X1AmpWalkEnv(X1AmpEnv):
         self.dof_vel[env_ids] = self.ref_dof_vel[env_ids]
         self.root_states[env_ids, :3] = self.ref_root_pos_w[env_ids]
         self.root_states[env_ids, 3:7] = self.ref_root_quat[env_ids]
-        self.root_states[env_ids, 7:10] = self.ref_root_lin_vel[env_ids]
-        self.root_states[env_ids, 10:13] = self.ref_root_ang_vel[env_ids]
+        # Spawn stationary: the forward speed must be earned by the policy,
+        # not injected at reset.
+        self.root_states[env_ids, 7:10] = 0.0
+        self.root_states[env_ids, 10:13] = 0.0
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_dof_state_tensor_indexed(
             self.sim, gymtorch.unwrap_tensor(self.dof_state), gymtorch.unwrap_tensor(env_ids_int32), len(env_ids)
@@ -71,6 +91,9 @@ class X1AmpWalkEnv(X1AmpEnv):
         self.gym.set_actor_root_state_tensor_indexed(
             self.sim, gymtorch.unwrap_tensor(self.root_states), gymtorch.unwrap_tensor(env_ids_int32), len(env_ids)
         )
+        self.episode_length_buf[env_ids] = 0
+        self.time_out_buf[env_ids] = False
+        self.reset_buf[env_ids] = False
         self.episode_root_start_xy[env_ids] = self.root_states[env_ids, :2]
         self.episode_success_buf[env_ids] = False
         self.walk_steps_elapsed[env_ids] = 0.0
