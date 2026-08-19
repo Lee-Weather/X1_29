@@ -43,4 +43,4 @@ class X1AmpWalkCfgPPO(X1AmpCfgPPO):
 
     class runner(X1AmpCfgPPO.runner):
         experiment_name = "x1_amp_walk"
-        run_name = "exp0_9_amp_walk"
+        run_name = "exp0_9r_amp_walk"

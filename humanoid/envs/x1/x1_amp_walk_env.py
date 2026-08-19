@@ -33,6 +33,12 @@ class X1AmpWalkEnv(X1AmpEnv):
         velocities, upright orientation, and a root velocity equal to the
         walk command. Rewards that compare against these slots degenerate
         into pure velocity tracking.
+
+        exp0.9r fix: reset_idx copies ref_root_pos_w into the root state, so
+        this slot must hold the nominal standing spawn (base_init_state
+        height, current xy) - NOT the fallen robot's position, which the
+        first version cloned from root_states and made every episode spawn
+        at ground level / underground and get ejected by ground contact.
         """
         walk_speed = self.cfg.walk.speed
         self.ref_dof_pos = self.default_dof_pos.repeat(self.num_envs, 1)
@@ -41,7 +47,38 @@ class X1AmpWalkEnv(X1AmpEnv):
         self.ref_root_lin_vel = torch.zeros(self.num_envs, 3, device=self.device)
         self.ref_root_lin_vel[:, 0] = walk_speed
         self.ref_root_ang_vel = torch.zeros(self.num_envs, 3, device=self.device)
-        self.ref_root_pos_w = self.root_states[:, :3].clone()
+        self.ref_root_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self.ref_root_pos_w[:, 0] = self.root_states[:, 0]
+        self.ref_root_pos_w[:, 1] = self.root_states[:, 1]
+        self.ref_root_pos_w[:, 2] = float(self.base_init_state[2])
+
+    def reset_idx(self, env_ids):
+        """Spawn at the nominal standing state (no staged/random phases)."""
+        if len(env_ids) == 0:
+            return
+        self.compute_ref_state()
+        self.dof_pos[env_ids] = self.ref_dof_pos[env_ids]
+        self.dof_vel[env_ids] = self.ref_dof_vel[env_ids]
+        self.root_states[env_ids, :3] = self.ref_root_pos_w[env_ids]
+        self.root_states[env_ids, 3:7] = self.ref_root_quat[env_ids]
+        self.root_states[env_ids, 7:10] = self.ref_root_lin_vel[env_ids]
+        self.root_states[env_ids, 10:13] = self.ref_root_ang_vel[env_ids]
+        env_ids_int32 = env_ids.to(dtype=torch.int32)
+        self.gym.set_dof_state_tensor_indexed(
+            self.sim, gymtorch.unwrap_tensor(self.dof_state), gymtorch.unwrap_tensor(env_ids_int32), len(env_ids)
+        )
+        self.gym.set_actor_root_state_tensor_indexed(
+            self.sim, gymtorch.unwrap_tensor(self.root_states), gymtorch.unwrap_tensor(env_ids_int32), len(env_ids)
+        )
+        self.episode_root_start_xy[env_ids] = self.root_states[env_ids, :2]
+        self.episode_success_buf[env_ids] = False
+        self.walk_steps_elapsed[env_ids] = 0.0
+        self.single_support_steps[env_ids] = 0.0
+        self.swing_streak_l[env_ids] = 0.0
+        self.swing_streak_r[env_ids] = 0.0
+        self.swing_count_l[env_ids] = 0.0
+        self.swing_count_r[env_ids] = 0.0
+        self.cum_abs_yaw[env_ids] = 0.0
 
     def _post_physics_step_callback(self):
         """Stay in WALK forever; only the diagnostics accumulator runs."""
