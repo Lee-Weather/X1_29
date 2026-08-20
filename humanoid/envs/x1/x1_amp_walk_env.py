@@ -67,7 +67,7 @@ class X1AmpWalkEnv(X1AmpEnv):
         self.ref_root_pos_w[:, 2] = self.stand_root_z
 
     def reset_idx(self, env_ids):
-        """Spawn at the NPZ standing state (no staged/random phases).
+        """Spawn at the NPZ walk state (no staged/random phases).
 
         exp0.9r3 accounting fix: the r2 override forgot to zero
         episode_length_buf, so after the first 920 steps every step tripped
@@ -79,6 +79,16 @@ class X1AmpWalkEnv(X1AmpEnv):
         and Train/mean_episode_length never logged, and replay CSVs showed
         a false "0 terminations / 100% survival". check_termination
         reassigns reset_buf from scratch each step, so no stale flags leak.
+
+        r6 (plan B): spawn INTO the walk - the yz frame-0 pose is mid-stride
+        (support leg extended, swing leg flexed, CoM forward). Holding that
+        pose open-loop with walk PD gains tips the robot forward within
+        ~1.2 s (r5 zero-action gate: 16 falls, all < 1.25 s). Injecting the
+        walk-speed initial velocity makes the spawn state dynamically
+        consistent with the demo distribution: the policy starts every
+        episode already walking and learns to sustain it, per the
+        steady-state-only training scope. Set walk.spawn_with_velocity=False
+        for the plan-A control run (stationary spawn, expect quick falls).
         """
         if len(env_ids) == 0:
             return
@@ -87,9 +97,16 @@ class X1AmpWalkEnv(X1AmpEnv):
         self.dof_vel[env_ids] = self.ref_dof_vel[env_ids]
         self.root_states[env_ids, :3] = self.ref_root_pos_w[env_ids]
         self.root_states[env_ids, 3:7] = self.ref_root_quat[env_ids]
-        # Spawn stationary: the forward speed must be earned by the policy,
-        # not injected at reset.
-        self.root_states[env_ids, 7:10] = 0.0
+        if getattr(self.cfg.walk, "spawn_with_velocity", True):
+            # Plan B: start mid-walk. The canonical forward axis is world x
+            # (spawn yaw is zero), so the command speed goes straight into
+            # the world-frame linear velocity slots.
+            self.root_states[env_ids, 7] = self.cfg.walk.speed
+            self.root_states[env_ids, 8] = 0.0
+            self.root_states[env_ids, 9] = 0.0
+        else:
+            # Plan A control: stationary spawn, speed must be earned.
+            self.root_states[env_ids, 7:10] = 0.0
         self.root_states[env_ids, 10:13] = 0.0
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_dof_state_tensor_indexed(

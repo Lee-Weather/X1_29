@@ -18,6 +18,11 @@ class X1AmpWalkCfg(X1AmpCfg):
         # in the same direction instead of fighting each other.
         speed = 0.25
         base_height = 0.62  # yz demo root height band 0.612-0.632 m
+        # exp0.9r6 (plan B): spawn mid-walk with the command speed injected.
+        # The yz frame-0 pose is mid-stride; stationary spawns fall in ~1.2 s
+        # open-loop (r5 gate) and waste most of each episode on recovery.
+        # Set False for the plan-A stationary control run.
+        spawn_with_velocity = True
 
     class control(X1AmpCfg.control):
         # exp0.9r4: 0.25 -> 0.20. r3 ran 8 of 12 joints pinned at |a|>0.9;
