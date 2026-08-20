@@ -123,12 +123,49 @@ class X1AmpWalkEnv(X1AmpEnv):
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
     def _reward_alive(self):
-        return torch.ones(self.num_envs, device=self.device)
+        """exp0.9r4: alive credit only while standing tall enough.
+
+        The r3 replay showed a 1.5 s limit cycle: sprint to 3.3 m/s, collapse
+        to bh 0.13, and spring back up - all while collecting unconditional
+        alive credit. Requiring root height above 0.45 m (and a roughly
+        upright torso) closes the face-down farming channel; the recovery
+        behavior itself is not punished because the reward just goes to zero.
+        """
+        upright = (self.root_states[:, 2] > 0.45) & (self.projected_gravity[:, 2] < -0.7)
+        return upright.float()
+
+    def _reward_forward_progress(self):
+        """exp0.9r4: two-sided speed kernel instead of the parent's Gaussian.
+
+        The parent kernel exp(-(v-cmd)^2/0.3^2) saturates to zero for fast
+        sprints - overshooting is worth as little as standing still, so the
+        burst cycle costs nothing. This version is full credit inside
+        [0.8, 1.2]x command, decays to zero by 1.8x, and turns LINEARLY
+        NEGATIVE beyond 1.8x (capped at -1) so sprinting is strictly worse
+        than standing.
+        """
+        cmd = self.cfg.walk.speed
+        v = self.base_lin_vel[:, 0]
+        lo, hi = 0.8 * cmd, 1.2 * cmd
+        over = 1.8 * cmd
+        reward = torch.zeros_like(v)
+        # undershoot: linear ramp 0 -> 1 up to 0.8x command
+        undershoot = v < lo
+        reward[undershoot] = torch.clamp(v[undershoot] / lo, min=0.0, max=1.0)
+        in_band = (v >= lo) & (v <= hi)
+        reward[in_band] = 1.0
+        # overshoot: 1 -> 0 across [1.2, 1.8]x command
+        overshoot_band = (v > hi) & (v <= over)
+        reward[overshoot_band] = 1.0 - (v[overshoot_band] - hi) / (over - hi)
+        # hard penalty beyond 1.8x, linear down to -1 at 2.6x command
+        sprint = v > over
+        reward[sprint] = torch.clamp(-(v[sprint] - over) / (0.8 * cmd), min=-1.0, max=0.0)
+        return reward
 
     def _reward_base_height(self):
         """Reward staying inside the nominal walking height band."""
         target = self.cfg.walk.base_height
-        return torch.exp(-torch.square(self.root_states[:, 2] - target) / 0.05**2)
+        return torch.exp(-torch.square(self.root_states[:, 2] - target) / 0.08**2)
 
     def _reward_walk_orientation(self):
         """Keep the torso upright (projected gravity z close to -1)."""
