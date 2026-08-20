@@ -72,6 +72,13 @@ class X1AmpWalkEnv(X1AmpEnv):
         exp0.9r3 accounting fix: the r2 override forgot to zero
         episode_length_buf, so after the first 920 steps every step tripped
         time_out and episodes collapsed to length 1 forever.
+
+        r5 fix: do NOT clear reset_buf here. step() returns reset_buf as the
+        done flags, so clearing it before the return swallowed every
+        termination - rewbuffer/lenbuffer never filled, Train/mean_reward
+        and Train/mean_episode_length never logged, and replay CSVs showed
+        a false "0 terminations / 100% survival". check_termination
+        reassigns reset_buf from scratch each step, so no stale flags leak.
         """
         if len(env_ids) == 0:
             return
@@ -93,7 +100,6 @@ class X1AmpWalkEnv(X1AmpEnv):
         )
         self.episode_length_buf[env_ids] = 0
         self.time_out_buf[env_ids] = False
-        self.reset_buf[env_ids] = False
         self.episode_root_start_xy[env_ids] = self.root_states[env_ids, :2]
         self.episode_success_buf[env_ids] = False
         self.walk_steps_elapsed[env_ids] = 0.0
