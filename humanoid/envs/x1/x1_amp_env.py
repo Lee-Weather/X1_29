@@ -34,7 +34,16 @@ class X1AmpEnv(X1TrajectoryEnv):
         self.amp_obs_buf = torch.zeros(self.num_envs, self.num_amp_obs, device=self.device)
 
     def _build_demo_amp_obs(self):
-        """Precompute stacked discriminator windows for the steady walk cycle."""
+        """Precompute stacked discriminator windows for the walk demo.
+
+        exp0.9r5: the demo window now covers the WHOLE reference file after the
+        first steady-cycle frame (not just one cycle). The v4 single-cycle demo
+        gave the discriminator only 233 training frames, which it separated
+        from rollouts almost instantly (disc loss 7.2 -> 0.001 in 60 iters).
+        The full-length yz reference (1381 frames / 5.9 cycles) multiplies the
+        demo support ~6x; history taps are still clamped to the window start
+        so every stacked sample stays inside it.
+        """
         # World-frame reference velocities -> base frame, matching the sim side.
         ref_ang_vel_b = quat_rotate_inverse(self.reference_root_quat, self.reference_root_ang_vel)
         ref_lin_vel_b = quat_rotate_inverse(self.reference_root_quat, self.reference_root_lin_vel)
@@ -44,11 +53,8 @@ class X1AmpEnv(X1TrajectoryEnv):
             raise RuntimeError(
                 f"Expected {self.AMP_OBS_DIM} AMP features per frame, got {single.shape[1]}")
 
-        # Demo data comes only from the cyclic steady-walk window that the
-        # environment actually replays; history taps are clamped to the window
-        # start so every stacked sample stays inside it.
         lo = self.walk_start_frame
-        hi = self.walk_cycle_boundary_frame
+        hi = self.reference_num_frames  # full tail: all cycles of the demo
         frames = torch.arange(lo, hi, device=self.device)
         # Oldest frame first, matching amp_history ordering on the sim side.
         stacked = torch.stack(
